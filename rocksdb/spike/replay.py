@@ -120,6 +120,7 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
     # Replay loop
     start_time = time.time()
     last_measurement = start_time
+    last_heartbeat = start_time
     blocks_since_measurement = 0
     last_rewind_test = 0
     tx_blocks = 0
@@ -143,6 +144,12 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
             raise
         
         blocks_since_measurement += 1
+        
+        # Time-based heartbeat: measurement intervals can be hours apart on a
+        # slow backend at scale, which would look like a stalled job.
+        if HEARTBEAT_FILE and time.time() - last_heartbeat > 60:
+            update_heartbeat(f"Replaying {backend_name}: height {height:,}")
+            last_heartbeat = time.time()
         
         # Measurement
         if height % MEASUREMENT_INTERVAL == 0:
