@@ -1,0 +1,99 @@
+# Benchmarks
+
+A four-backend replay experiment: extract every transaction block's coin
+deltas from a synced mainnet database, then replay them through a uniform
+per-block API against each backend and measure throughput as the database
+grows.
+
+## Method
+
+1. **Extract.** One linear scan of the `coin_record` table in a synced
+   215 GB mainnet SQLite DB (every row carries `confirmed_index` and
+   `spent_index`, so no blockchain walk is needed), bucketed by height into
+   a stream of per-block deltas: timestamp, created coins, spent coins.
+   Serialized as length-prefixed binary, zstd-compressed — 1.5 GB for
+   heights 0 through 1,000,000.
+2. **Replay.** Each backend implements the same minimal API
+   (`process_spends` / `rewind_to_block` / `get_coin_records` / `peak`).
+   Replay applies each block: **multi-get the removals first** (as real
+   validation does), then apply creations, spends, undo record, and peak in
+   one batch. Write-only replay would flatter both engines and miss
+   index-read costs, so reads are deliberately in the loop.
+3. **Measure.** Wall time, blocks/sec, and on-disk size logged every 10k
+   heights.
+
+The input covers replay to height 1,000,000: **351,808 transaction blocks,
+22.07M coins created, 9.88M coins spent**.
+
+## Backends
+
+| Backend | Description |
+|---|---|
+| `sqlite-full` | Production schema, all four indexes |
+| `sqlite-consensus` | Same schema minus the explorer indexes (puzzle_hash, coin_parent) |
+| `rocks` | RocksDB; spent coins kept and flagged (db_v3-style schema, peak in the same WriteBatch) |
+| `rocks-lean` | RocksDB; spent coins **deleted**, full spent records preserved in a per-block undo log |
+
+## Results
+
+| Backend | Total time | Avg blk/s | End-of-run blk/s | Final size | Live records |
+|---|---|---|---|---|---|
+| sqlite-full | 14,786 s | 68 | ~8.4 | 7.8 GB | 22.07M |
+| sqlite-consensus | 9,930 s | 101 | ~17 | 5.8 GB | 22.07M |
+| rocks | 377 s | 2,650 | ~230–500 | 3.9 GB | 22.07M |
+| rocks-lean | 320 s | 3,123 | ~350–580 | 3.1 GB | 12.19M |
+
+![Throughput vs block height](assets/throughput.png)
+
+![Database size growth](assets/db_size.png)
+
+## What the curves say
+
+- **The engine gap is ~40x at height 1M and widening.** All curves decay,
+  but SQLite decays into single digits while RocksDB stays in the hundreds.
+- **Dropping explorer indexes only buys SQLite ~1.5–2x.** The win is the
+  engine (LSM writes and bloom-filtered reads vs B-tree maintenance and
+  scattered page reads), not the schema. This is the result that justifies
+  an engine migration rather than just a schema diet.
+- **rocks-lean wins on every axis** — fastest, smallest on disk, and its
+  working set is the UTXO set rather than all coins ever created. On
+  spinning disks and small RAM, working-set size is the whole game.
+- **Perspective:** even degraded SQLite (8 blk/s) beats mainnet's real-time
+  block production rate (0.31 blk/s). The payoff of the migration is
+  initial-sync speed and headroom on weak hardware, not survival.
+
+## Reproducing
+
+- **Spike repo:** `~/projects/coin-store-spike` (local git repo, 6 commits,
+  head `9df1b7d` at time of writing; not yet published). Contains
+  `extract.py`, `coin_store.py` (all four backends), `replay.py`, unit
+  tests, and the per-run CSVs behind the plots.
+- **Input:** a synced mainnet `blockchain_v2_mainnet.sqlite` (215 GB).
+  `extract.py` produces `extract.dat.zst` (~1.5 GB, length-prefixed binary,
+  zstd), capped at height 1M.
+- **Host:** spinning disk (HDD), 15 GB RAM — deliberately representative of
+  the weak-hardware target, not a fast dev box.
+- **Run:** `uv run extract.py` then `uv run replay.py` (runs all four
+  variants sequentially; ~7.5 h wall on the host above).
+- **Deps:** `chia_rs`, `rocksdict`, `zstandard`, `matplotlib`.
+
+## Caveats
+
+Honest limits of this experiment — read before quoting the numbers:
+
+- **Stops at height 1M**, which is 17.5% of mainnet history (~8.5M blocks,
+  ~400M coins). The curves at the cutoff are still diverging; extrapolation
+  favors RocksDB, but the full-height numbers are not measured.
+- **Storage layer only.** Real sync also pays signature verification and
+  CLVM execution. This benchmark isolates the coin-store cost; it does not
+  predict end-to-end sync speedup.
+- **Durability configs are comparable but not rigorous.** SQLite ran
+  WAL/synchronous=NORMAL; RocksDB ran its default WAL without per-write
+  fsync. Neither side fsyncs per block, so the comparison is fair-ish, but
+  no strict-durability variant was measured.
+- **Page-cache effects.** The replayed DBs (3–8 GB) approach the host's
+  15 GB RAM. A planned memory-capped (2 GB cgroup) rerun of the most
+  interesting pair was not performed; on a truly RAM-starved box the SQLite
+  numbers would likely be worse, not better.
+- **Rewind under replay was not exercised** in the timed runs; rollback
+  correctness is covered by unit tests only.

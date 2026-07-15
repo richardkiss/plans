@@ -1,0 +1,10 @@
+[book]
+title = "Chia Coin Store: RocksDB Migration"
+authors = ["Richard Kiss"]
+language = "en"
+src = "src"
+
+[output.html]
+additional-js = ["giscus.js"]
+default-theme = "light"
+preferred-dark-theme = "navy"
