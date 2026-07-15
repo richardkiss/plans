@@ -1,5 +1,0 @@
-coin_store
-enrich_results
-extract
-replay
-test_coin_store

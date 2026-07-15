@@ -1,5 +1,0 @@
-[console_scripts]
-spike-enrich = enrich_results:main
-spike-extract = extract:main
-spike-replay = replay:main
-spike-test = test_coin_store:main

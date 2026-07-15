@@ -4,6 +4,9 @@ Living page. Dated entries, newest first.
 
 ## 2026-07-15 — Spike complete; Phase 1 in progress
 
+- Full-mainnet benchmark underway. Extraction of all 8.5M blocks (~408M
+  coins) is running now; the ~2-day four-backend replay follows. This will
+  replace the "stops at height 1M" caveat with measured numbers.
 - Benchmark spike complete. Four backends replayed to height 1M on
   representative weak hardware ([host-1](bench-host.md): HDD, 15 GB RAM).
   Headline: ~40x engine gap, widening; `rocks-lean` wins every axis. Full

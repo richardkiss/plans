@@ -1,2 +1,5 @@
 book/
 _site/
+build/
+*.egg-info/
+__pycache__/
