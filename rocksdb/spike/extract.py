@@ -41,7 +41,12 @@ def format_bytes(size: int) -> str:
     return f"{size:.1f} TB"
 
 
-def write_temp_creations(conn, temp_file, max_height=None):
+def pct(count, total):
+    """Format count as a percentage of total, if total is known."""
+    return f" ({100 * count / total:.1f}%)" if total else ""
+
+
+def write_temp_creations(conn, temp_file, max_height=None, total=None):
     """Write creations stream to temp file: height(4) timestamp(8) coin_id(32) parent(32) puzzle_hash(32) amount(8) coinbase(1)."""
     print("Pass 1: Extracting creations...")
     if max_height:
@@ -87,8 +92,8 @@ def write_temp_creations(conn, temp_file, max_height=None):
                 if now - last_update >= 10:
                     elapsed = now - start_time
                     rate = count / elapsed
-                    print(f"  Processed {count:,} coins - {rate:.0f} coins/sec")
-                    update_heartbeat(f"Pass 1: {count:,} creations")
+                    print(f"  Processed {count:,} coins{pct(count, total)} - {rate:.0f} coins/sec")
+                    update_heartbeat(f"Pass 1: {count:,} creations{pct(count, total)}")
                     last_update = now
     
     elapsed = time.time() - start_time
@@ -96,7 +101,7 @@ def write_temp_creations(conn, temp_file, max_height=None):
     return count
 
 
-def write_temp_spends(conn, temp_file, max_height=None):
+def write_temp_spends(conn, temp_file, max_height=None, total=None):
     """Write spends stream to temp file: height(4) coin_id(32)."""
     print("Pass 2: Extracting spends...")
     if max_height:
@@ -138,8 +143,8 @@ def write_temp_spends(conn, temp_file, max_height=None):
                 if now - last_update >= 10:
                     elapsed = now - start_time
                     rate = count / elapsed
-                    print(f"  Processed {count:,} spends - {rate:.0f} spends/sec")
-                    update_heartbeat(f"Pass 2: {count:,} spends")
+                    print(f"  Processed {count:,} spends{pct(count, total)} - {rate:.0f} spends/sec")
+                    update_heartbeat(f"Pass 2: {count:,} spends{pct(count, total)}")
                     last_update = now
     
     elapsed = time.time() - start_time
@@ -147,7 +152,7 @@ def write_temp_spends(conn, temp_file, max_height=None):
     return count
 
 
-def merge_and_compress(creations_file, spends_file, output_file, total_created, total_spent):
+def merge_and_compress(creations_file, spends_file, output_file, total_created, total_spent, peak_height=None):
     """Merge sorted creation and spend streams into compressed output."""
     print(f"Pass 3: Merging and compressing to {output_file}...")
     update_heartbeat("Merging streams and compressing")
@@ -196,8 +201,10 @@ def merge_and_compress(creations_file, spends_file, output_file, total_created, 
                         if blocks_written % 10000 == 0:
                             now = time.time()
                             if now - last_update >= 10:
-                                print(f"  Merged {blocks_written:,} blocks")
-                                update_heartbeat(f"Merging: {blocks_written:,} blocks")
+                                # Total tx blocks isn't known up front; height vs peak is.
+                                progress = pct(current_height, peak_height)
+                                print(f"  Merged {blocks_written:,} blocks - height {current_height:,}{progress}")
+                                update_heartbeat(f"Merging: {blocks_written:,} blocks, height {current_height:,}{progress}")
                                 last_update = now
                         
                         # Reset for next block
@@ -254,6 +261,7 @@ def main():
     cursor = conn.cursor()
     
     # Get DB stats
+    peak_height = max_height
     if max_height:
         cursor.execute("SELECT COUNT(*) FROM coin_record WHERE confirmed_index <= ?", (max_height,))
         total_coins = cursor.fetchone()[0]
@@ -287,12 +295,12 @@ def main():
     
     try:
         # Pass 1: Extract creations
-        created_count = write_temp_creations(conn, creations_temp, max_height)
+        created_count = write_temp_creations(conn, creations_temp, max_height, total=total_coins)
         print(f"  Temp file size: {format_bytes(creations_temp.stat().st_size)}")
         print()
         
         # Pass 2: Extract spends
-        spent_count = write_temp_spends(conn, spends_temp, max_height)
+        spent_count = write_temp_spends(conn, spends_temp, max_height, total=total_spends)
         print(f"  Temp file size: {format_bytes(spends_temp.stat().st_size)}")
         print()
         
@@ -309,7 +317,7 @@ def main():
         
         # Pass 3: Merge and compress
         blocks_written = merge_and_compress(creations_temp, spends_temp, OUTPUT_FILE, 
-                                           created_count, spent_count)
+                                           created_count, spent_count, peak_height=peak_height)
         
     finally:
         # Clean up temp files
