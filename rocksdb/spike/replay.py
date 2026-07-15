@@ -47,8 +47,14 @@ def format_bytes(size: int) -> str:
     return f"{size:.1f} TB"
 
 
-def read_extract(path: Path):
-    """Generator that yields blocks from the extract file."""
+def read_extract(path: Path, progress: dict | None = None):
+    """Generator that yields blocks from the extract file.
+
+    If `progress` is given, its "pct" key tracks compressed bytes consumed
+    vs file size — the file is read linearly, so this is proportional to
+    completion.
+    """
+    file_size = path.stat().st_size
     with open(path, "rb") as f:
         dctx = zstd.ZstdDecompressor()
         with dctx.stream_reader(f) as reader:
@@ -91,6 +97,8 @@ def read_extract(path: Path):
                 # Generate synthetic block hash
                 block_hash = hashlib.sha256(str(height).encode()).digest()
                 
+                if progress is not None:
+                    progress["pct"] = 100.0 * f.tell() / file_size
                 yield height, timestamp, block_hash, created_coins, spent_ids
 
 
@@ -129,7 +137,8 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
     # For rewind test - save state
     rewind_test_data = []
     
-    for height, timestamp, block_hash, created_coins, spent_ids in read_extract(EXTRACT_FILE):
+    progress = {"pct": 0.0}
+    for height, timestamp, block_hash, created_coins, spent_ids in read_extract(EXTRACT_FILE, progress):
         if max_height is not None and height > max_height:
             break
         
@@ -148,7 +157,7 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
         # Time-based heartbeat: measurement intervals can be hours apart on a
         # slow backend at scale, which would look like a stalled job.
         if HEARTBEAT_FILE and time.time() - last_heartbeat > 60:
-            update_heartbeat(f"Replaying {backend_name}: height {height:,}")
+            update_heartbeat(f"Replaying {backend_name}: height {height:,} [{progress['pct']:.1f}%]")
             last_heartbeat = time.time()
         
         # Measurement
@@ -172,9 +181,9 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
             csv_writer.writerow([height, wall_seconds, blocks_per_sec, coins_in_db, db_size, rss_mb])
             csv_file.flush()
             
-            print(f"  Height {height:,}: {blocks_per_sec:.1f} blk/s, "
+            print(f"  Height {height:,} [{progress['pct']:.1f}%]: {blocks_per_sec:.1f} blk/s, "
                   f"{coins_in_db:,} coins, {format_bytes(db_size)}")
-            update_heartbeat(f"Replaying {backend_name}: height {height:,}")
+            update_heartbeat(f"Replaying {backend_name}: height {height:,} [{progress['pct']:.1f}%]")
             
             last_measurement = now
             blocks_since_measurement = 0
