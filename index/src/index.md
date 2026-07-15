@@ -1,24 +1,21 @@
 # Plans
 
-This site collects engineering plans as living documents — one small book per
-plan. The point is to make significant technical decisions reviewable: by me
-(Richard Kiss), before committing weeks of work, and by anyone else wondering
-why a change is being made the way it is.
+Engineering plans, one small book per plan. I write these to force myself to
+think before committing weeks of work, and so anyone reviewing (or just
+wondering why I'm doing something) can follow the reasoning.
 
-Each plan follows the same template:
+Each plan has the same shape:
 
 1. **Problem** — what hurts, with numbers.
-2. **Evidence** — experiments and measurements, including how to reproduce
-   them and what the caveats are.
-3. **Target** — the design we're aiming at.
-4. **Pathway** — the sequence of small, reviewable steps to get there, each
-   with acceptance criteria and a rollback story.
-5. **Decisions** — a log of the choices made along the way and why.
-6. **Status** — a dated, living record of where things stand.
+2. **Evidence** — experiments, how to rerun them, and the caveats.
+3. **Target** — the design I'm aiming at.
+4. **Pathway** — small reviewable steps, each with acceptance criteria and a
+   rollback story.
+5. **Decisions** — what I chose and why.
+6. **Status** — dated notes on where things actually stand.
 
-Plans are honest by construction: caveats stay visible, open questions are
-marked as open, and the status page says what is *actually* done rather than
-what was hoped.
+Caveats stay visible and open questions stay marked open. The status page
+says what's *actually* done, not what I hoped would be done by now.
 
 ## Active plans
 
@@ -28,5 +25,4 @@ what was hoped.
 
 ## Drafts
 
-Nothing here yet. Drafts will be listed in this section before they graduate
-to active plans.
+Nothing here yet.

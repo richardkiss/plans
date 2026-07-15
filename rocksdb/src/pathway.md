@@ -1,23 +1,22 @@
 # Pathway
 
-Baby steps. Each step is a small, reviewable PR with acceptance criteria and
+Baby steps. Each one is a small, reviewable PR with acceptance criteria and
 a rollback story. Nothing lands that isn't independently valuable, and the
-expensive steps are sequenced after hard fork 2 (HF2) where that makes them
-cheaper.
+expensive steps come after hard fork 2 (HF2), where they get cheaper.
 
 ## Step 1 — Phase 1 protocols (in progress)
 
 Pure type work, no DB changes. On the `store-split` branch:
 
 - Rebase onto current main (the branch is ~492 commits behind; the diff is
-  small and mostly additive).
+  small and mostly additive, so this should be cheap).
 - Slim `CoinStoreProtocol` to the consensus surface (5 methods) and create
   `BlockStoreProtocol` for what `Blockchain` actually uses; type-narrow
   `Blockchain` to both; delete the `chia.consensus -> chia.full_node` tach
   exception. (Already done on the branch.)
-- **Add `snapshot()` / `CoinStoreSnapshot`** — the key abstraction, not yet
-  implemented. SQLite implementation = read transaction; RocksDB will
-  implement it as a Snapshot; tests get a frozen dict.
+- Add `snapshot()` / `CoinStoreSnapshot` — the key abstraction, not yet
+  implemented. SQLite implements it as a read transaction; RocksDB will use
+  a Snapshot; tests get a frozen dict.
 - Tests for the protocol surface.
 - Open a PR superseding the stale #20566 (ConsensusStore) and #20443
   (db_v3).
@@ -31,31 +30,31 @@ pass; snapshot semantics covered by new tests.
 The benchmark's `sqlite-consensus` variant: removing the puzzle_hash and
 coin_parent indexes from the consensus path buys ~1.5–2x on SQLite with no
 engine change. Only worth doing as its own step if explorer queries have
-somewhere else to go (ExplorerStore) or behind a lean-validator flag.
-Independent of everything below; a cheap fallback if the RocksDB work
+somewhere else to go (ExplorerStore) or it hides behind a lean-validator
+flag. Independent of everything below; a cheap fallback if the RocksDB work
 stalls.
 
 *Acceptance:* sync throughput improves on a reference box; RPC/wallet
 queries still answered (from the explorer side).
-*Rollback:* re-create the indexes; data loss is impossible (indexes are
-derived).
+*Rollback:* re-create the indexes; they're derived data, so nothing can be
+lost.
 
 ## Wait point — HF2 lands (external dependency)
 
 HF2 removes generator backrefs, which takes generators out of the consensus
-path entirely. That shrinks the atomic unit to **coin set + peak** and makes
-the minimal API in [Target design](target.md) valid. Steps 3–5 are
-deliberately sequenced after HF2 because:
+path entirely. That shrinks the atomic unit to coin set + peak and makes the
+minimal API in [Target design](target.md) valid. Steps 3–5 deliberately
+come after HF2:
 
-- Pre-HF2, `BlockStoreProtocol` must carry generator access
+- Pre-HF2, `BlockStoreProtocol` has to carry generator access
   (`get_generator` / `get_generators_at`) and `add_full_block` stays fused —
-  machinery HF2 deletes. Building migration infrastructure around it would
-  be over-investment in code with a known expiry date.
-- Post-HF2, "give me block N" ambiguity during reorgs disappears from
-  generator handling, and block records become repair-at-startup rather than
-  part of the atomic transaction.
+  machinery HF2 deletes. I don't want to build migration infrastructure
+  around code with a known expiry date.
+- Post-HF2, the "give me block N" reorg ambiguity disappears from generator
+  handling, and block records become repair-at-startup rather than part of
+  the atomic transaction.
 
-HF2 is active priority 1 upstream, so this is a wait on a moving train, not
+HF2 is active priority 1 upstream, so this is waiting on a moving train, not
 a parked dependency.
 
 ## Step 3 (post-HF2) — peak + block-record migration
@@ -75,9 +74,9 @@ paths workable during transition.
 
 Implement `CoinStoreProtocol` (including snapshot) on RocksDB via rocksdict,
 reusing the db_v3 key schema and its fsck consistency checker as prior art —
-but with coins, undo records, and peak in **one** RocksDB from day one.
-Initially spent-coins-kept (`rocks` variant) for a smaller diff against
-known-good semantics. Behind a config flag; SQLite remains the default.
+but with coins, undo records, and peak in *one* RocksDB from day one.
+Start with spent-coins-kept (the `rocks` variant) for a smaller diff against
+known-good semantics. Behind a config flag; SQLite stays the default.
 
 *Acceptance:* full mainnet sync completes; fsck passes; reorg tests pass;
 benchmark confirms the spike's curve on a real node.
@@ -86,8 +85,8 @@ benchmark confirms the spike's curve on a real node.
 ## Step 5 (post-HF2) — rocks-lean semantics
 
 Flip to delete-spent-coins with full records in the undo log, prunable
-beyond reorg depth. Requires the singleton fast-forward open question
-([Target design](target.md)) to be resolved, since spent-coin lookups leave
+beyond reorg depth. This needs the singleton fast-forward question
+([Target design](target.md)) answered first, since spent-coin lookups leave
 the consensus store.
 
 *Acceptance:* same as step 4 plus resurrection correctness under deep-reorg
