@@ -346,12 +346,13 @@ def main():
     
     PLOTS_DIR.mkdir(exist_ok=True)
     
-    # Run each backend sequentially
+    # Run each backend sequentially, fastest first, so results arrive in
+    # increasing runtime order (rocks pair: <1h each; sqlite: tens of hours).
     backends = [
-        ("sqlite-full", Path("db_sqlite_full.db")),
-        ("sqlite-consensus", Path("db_sqlite_consensus.db")),
         ("rocks", Path("db_rocks")),
         ("rocks-lean", Path("db_rocks_lean")),
+        ("sqlite-consensus", Path("db_sqlite_consensus.db")),
+        ("sqlite-full", Path("db_sqlite_full.db")),
     ]
     
     results = []
