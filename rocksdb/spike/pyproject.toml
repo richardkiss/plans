@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coin-store-spike"
+version = "0.2.0"
+description = "Benchmark SQLite vs RocksDB for Chia's coin store"
+requires-python = ">=3.10"
+dependencies = [
+    "chia_rs>=0.7.0",
+    "rocksdict>=0.3.0",
+    "zstandard>=0.22.0",
+    "matplotlib>=3.8.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+spike-extract = "extract:main"
+spike-replay = "replay:main"
+spike-enrich = "enrich_results:main"
+spike-test = "test_coin_store:main"
+
+[tool.setuptools]
+py-modules = ["extract", "coin_store", "replay", "enrich_results", "test_coin_store"]

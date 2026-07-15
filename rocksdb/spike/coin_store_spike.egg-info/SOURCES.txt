@@ -1,0 +1,13 @@
+README.md
+coin_store.py
+enrich_results.py
+extract.py
+pyproject.toml
+replay.py
+test_coin_store.py
+coin_store_spike.egg-info/PKG-INFO
+coin_store_spike.egg-info/SOURCES.txt
+coin_store_spike.egg-info/dependency_links.txt
+coin_store_spike.egg-info/entry_points.txt
+coin_store_spike.egg-info/requires.txt
+coin_store_spike.egg-info/top_level.txt
