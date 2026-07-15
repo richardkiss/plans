@@ -7,8 +7,11 @@ Living page. Dated entries, newest first.
 - Full-mainnet benchmark underway. Extraction of all 8.5M blocks (~408M
   coins) is running now; the ~2-day four-backend replay follows. This will
   replace the "stops at height 1M" caveat with measured numbers.
+- Correction: [host-1](bench-host.md) is NVMe-backed, not HDD as first
+  believed (the VM reports its disk as rotational). Benchmark caveats
+  updated; the spinning-disk story needs a real-HDD run.
 - Benchmark spike complete. Four backends replayed to height 1M on
-  representative weak hardware ([host-1](bench-host.md): HDD, 15 GB RAM).
+  [host-1](bench-host.md) (NVMe-backed VM, 15 GB RAM).
   Headline: ~40x engine gap, widening; `rocks-lean` wins every axis. Full
   results and caveats in [Benchmarks](benchmarks.md). The harness is in this
   repo

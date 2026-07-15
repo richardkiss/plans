@@ -94,16 +94,21 @@ uvx --from "$SPIKE" spike-replay            # all four backends; ~7.5 h on the r
 `report.md`. Budget ~10 GB of free disk: each backend's DB peaks at up to
 ~8 GB and gets deleted before the next one starts.
 
-The published numbers come from **host-1** — HDD-backed storage, 15 GB RAM,
-deliberately representative of the weak-hardware target. Full specs and
-notes for comparing runs across machines: [Benchmark hosts](bench-host.md).
-I plan to try a slower box later; runs on other machines should be tagged
-with their host name.
+The published numbers come from **host-1** — a VM with NVMe-backed storage
+and 15 GB RAM. Full specs and notes for comparing runs across machines:
+[Benchmark hosts](bench-host.md). I plan to try a slower box later; runs on
+other machines should be tagged with their host name.
 
 ## Caveats
 
 Read these before quoting the numbers.
 
+- **The host is NVMe-backed, not a spinning disk.** I originally believed
+  this box was HDD-backed (the guest reports the virtual disk as
+  rotational; the backing store is NVMe). NVMe's cheap random reads flatter
+  SQLite, so the gap on a real HDD should be *larger* — but that's
+  extrapolation until a real-HDD run exists. Details:
+  [Benchmark hosts](bench-host.md).
 - **Stops at height 1M**, which is 17.5% of mainnet history (~8.5M blocks,
   ~400M coins). The curves are still diverging at the cutoff; extrapolation
   favors RocksDB, but the full-height numbers are not measured.

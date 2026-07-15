@@ -6,23 +6,27 @@ here (I plan to try a slower box).
 
 ## host-1 (2026-07-15 runs)
 
-The host for all published results so far: a virtual machine backed by
-rotational storage — deliberately representative of the weak-hardware
-target, not a fast dev box.
+The host for all published results so far: a virtual machine whose disk is
+NVMe-backed. (The guest reports the disk as rotational — `lsblk` says
+`ROTA=1` — but that's the virtualization layer talking; the backing store is
+NVMe.) So host-1 is *not* the spinning-disk target machine, and the
+published numbers should be read as NVMe numbers.
 
 | Component | Spec |
 |---|---|
 | CPU | AMD Ryzen AI Max+ 395 (VM guest, 32 vCPUs, 1 thread/core) |
 | RAM | 15 GB |
-| Disk | QEMU virtual disk, 600 GB, rotational (HDD-backed) |
+| Disk | QEMU virtual disk, 600 GB, NVMe-backed (guest reports rotational) |
 | Filesystem | ext4 |
 | OS | Debian 12 (bookworm), kernel 6.1 |
 | Python | 3.13 (via uv) |
 
 Notes for cross-machine comparison:
 
-- The CPU is fast; the disk is the deliberate bottleneck. The engine gap is
-  mostly an I/O-pattern story, so disk type matters far more than CPU here.
+- On NVMe, random reads are cheap, which *flatters SQLite*. The B-tree vs
+  LSM divergence should be larger on a real spinning disk, where scattered
+  point reads pay full seek cost. Until a real-HDD run exists, the
+  spinning-disk story is extrapolation.
 - 15 GB RAM means the replayed databases (3–8 GB) partially fit in page
   cache — see the caveats on the [Benchmarks](benchmarks.md) page. A
   smaller-RAM host would likely *widen* the SQLite/RocksDB gap.
@@ -35,5 +39,6 @@ Notes for cross-machine comparison:
 lscpu | grep 'Model name'; free -g | head -2; lsblk -d -o NAME,MODEL,SIZE,ROTA
 ```
 
-Add a section above with the output, and tag result tables/CSVs with the
-host name.
+Don't trust `ROTA` inside a VM (see above) — record what the backing store
+actually is. Add a section here with the output, and tag result tables/CSVs
+with the host name.
