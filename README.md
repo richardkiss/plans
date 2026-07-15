@@ -12,6 +12,10 @@ visible, open questions are marked open.
 
 - `index/` — tiny landing book: the plan index and a drafts section.
 - `rocksdb/` — the Chia coin store RocksDB migration plan.
+- `rocksdb/spike/` — the benchmark harness behind the plan's evidence,
+  packaged so it runs straight from GitHub:
+  `uvx --from "git+https://github.com/richardkiss/plans#subdirectory=rocksdb/spike" spike-test`
+  (see its [README](rocksdb/spike/README.md)).
 - `theme/giscus.js` — shared comments include, loaded by every book via a
   symlink in each book directory (`theme/giscus.html` documents the
   canonical snippet).

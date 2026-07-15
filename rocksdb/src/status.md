@@ -5,10 +5,12 @@ Living page. Dated entries, newest first.
 ## 2026-07-15 — Spike complete; Phase 1 in progress
 
 - **Benchmark spike complete.** Four backends replayed to height 1M on
-  representative weak hardware (HDD, 15 GB RAM). Headline: ~40x engine gap,
-  widening; rocks-lean wins every axis. Full results and caveats in
-  [Benchmarks](benchmarks.md). Spike repo is local
-  (`~/projects/coin-store-spike`), not yet published.
+  representative weak hardware ([host-1](bench-host.md): HDD, 15 GB RAM).
+  Headline: ~40x engine gap, widening; rocks-lean wins every axis. Full
+  results and caveats in [Benchmarks](benchmarks.md). The harness is
+  published in this repo
+  ([`rocksdb/spike/`](https://github.com/richardkiss/plans/tree/main/rocksdb/spike))
+  and runnable in one line via `uvx`.
 - **Reorg archeology complete.** All-of-mainnet orphan analysis supports
   delete-spent-coins; see the [decision log](decisions.md).
 - **Phase 1 (protocols) in progress.** The `store-split` worktree has the

@@ -64,18 +64,38 @@ The input covers replay to height 1,000,000: **351,808 transaction blocks,
 
 ## Reproducing
 
-- **Spike repo:** `~/projects/coin-store-spike` (local git repo, 6 commits,
-  head `9df1b7d` at time of writing; not yet published). Contains
-  `extract.py`, `coin_store.py` (all four backends), `replay.py`, unit
-  tests, and the per-run CSVs behind the plots.
-- **Input:** a synced mainnet `blockchain_v2_mainnet.sqlite` (215 GB).
-  `extract.py` produces `extract.dat.zst` (~1.5 GB, length-prefixed binary,
-  zstd), capped at height 1M.
-- **Host:** spinning disk (HDD), 15 GB RAM — deliberately representative of
-  the weak-hardware target, not a fast dev box.
-- **Run:** `uv run extract.py` then `uv run replay.py` (runs all four
-  variants sequentially; ~7.5 h wall on the host above).
-- **Deps:** `chia_rs`, `rocksdict`, `zstandard`, `matplotlib`.
+The complete harness lives in this site's repo, under
+[`rocksdb/spike/`](https://github.com/richardkiss/plans/tree/main/rocksdb/spike):
+`extract.py`, `coin_store.py` (all four backends), `replay.py`, unit tests,
+and the per-run CSVs behind the plots. Everything runs with
+[uv](https://docs.astral.sh/uv/) straight from GitHub — each command below
+downloads the code, builds an isolated venv, and runs, in one line.
+
+**Unit tests** (all four backends; no mainnet DB needed, ~seconds):
+
+```bash
+uvx --from "git+https://github.com/richardkiss/plans#subdirectory=rocksdb/spike" spike-test
+```
+
+**Full benchmark** (needs a synced mainnet `blockchain_v2_mainnet.sqlite`,
+~215 GB, read-only; default location `~/.chia/mainnet/db/`, override with
+`CHIA_MAINNET_DB`):
+
+```bash
+SPIKE="git+https://github.com/richardkiss/plans#subdirectory=rocksdb/spike"
+uvx --from "$SPIKE" spike-extract 1000000   # -> extract.dat.zst (~1.5 GB), height cap optional
+uvx --from "$SPIKE" spike-replay            # all four backends; ~7.5 h on the reference host
+```
+
+`spike-replay` writes throughput CSVs and plots to `plots/` and a summary to
+`report.md`. Budget ~10 GB of free disk: each backend's DB peaks at up to
+~8 GB and is deleted before the next one starts.
+
+**Host:** the published numbers come from **host-1** — HDD-backed storage,
+15 GB RAM, deliberately representative of the weak-hardware target. Full
+specs and notes for comparing runs across machines:
+[Benchmark hosts](bench-host.md). Runs on other machines (a slower box is
+planned) should be tagged with their host name.
 
 ## Caveats
 
