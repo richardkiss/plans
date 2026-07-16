@@ -47,12 +47,39 @@ def format_bytes(size: int) -> str:
     return f"{size:.1f} TB"
 
 
-def read_extract(path: Path, progress: dict | None = None):
+def _read_exact(reader, n: int) -> bytes:
+    """Read exactly n bytes (stream readers may return short reads for large n)."""
+    chunks = []
+    remaining = n
+    while remaining > 0:
+        chunk = reader.read(remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return chunks[0] if len(chunks) == 1 else b"".join(chunks)
+
+
+def _skip_exact(reader, n: int) -> None:
+    """Discard exactly n bytes without materializing them."""
+    remaining = n
+    while remaining > 0:
+        chunk = reader.read(min(remaining, 1 << 20))
+        if not chunk:
+            break
+        remaining -= len(chunk)
+
+
+def read_extract(path: Path, progress: dict | None = None, skip_below: int | None = None):
     """Generator that yields blocks from the extract file.
 
     If `progress` is given, its "pct" key tracks compressed bytes consumed
     vs file size — the file is read linearly, so this is proportional to
     completion.
+
+    If `skip_below` is given, blocks below that height are yielded with an
+    EMPTY created-coins list (spent ids still parsed, creation records bulk-
+    skipped) — a fast path for resuming: the caller must not process them.
     """
     file_size = path.stat().st_size
     with open(path, "rb") as f:
@@ -65,6 +92,18 @@ def read_extract(path: Path, progress: dict | None = None):
                     break
                 
                 height, timestamp, n_created = struct.unpack(">IQI", header)
+                
+                if skip_below is not None and height < skip_below:
+                    # Fast path: bulk-skip creation records, parse spend ids only
+                    _skip_exact(reader, 105 * n_created)
+                    n_spent = struct.unpack(">I", _read_exact(reader, 4))[0]
+                    spent_blob = _read_exact(reader, 32 * n_spent)
+                    spent_ids = [spent_blob[i:i + 32] for i in range(0, 32 * n_spent, 32)]
+                    block_hash = hashlib.sha256(str(height).encode()).digest()
+                    if progress is not None:
+                        progress["pct"] = 100.0 * f.tell() / file_size
+                    yield height, timestamp, block_hash, [], spent_ids
+                    continue
                 
                 # Read created coins
                 created_coins = []
@@ -110,20 +149,47 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
     
     update_heartbeat(f"Replaying {backend_name}: starting")
     
-    # Create store
-    if db_path.exists():
-        if db_path.is_dir():
-            shutil.rmtree(db_path)
-        else:
-            db_path.unlink()
+    csv_path = PLOTS_DIR / f"{backend_name}.csv"
     
-    store = create_store(backend_name, db_path)
+    # Resume support (SPIKE_RESUME=1): if the DB exists, continue from its
+    # peak instead of starting over. Peak is written atomically with each
+    # block, so a crashed run's DB is consistent at its last applied block.
+    resume_from = None
+    wall_offset = 0.0
+    if os.environ.get("SPIKE_RESUME") == "1" and db_path.exists():
+        store = create_store(backend_name, db_path)
+        peak = store.peak()
+        if peak and peak[0] > 0:
+            resume_from = peak[0]
+            # Continue wall-clock from the previous run's last measurement
+            if csv_path.exists():
+                with open(csv_path) as f:
+                    for row in csv.DictReader(f):
+                        if int(row["height"]) <= resume_from:
+                            wall_offset = float(row["wall_seconds"])
+            print(f"  RESUMING from height {resume_from:,} (wall offset {wall_offset:.0f}s)")
+        else:
+            store.close()
+            store = None
+    else:
+        store = None
+    
+    if resume_from is None:
+        if db_path.exists():
+            if db_path.is_dir():
+                shutil.rmtree(db_path)
+            else:
+                db_path.unlink()
+        store = create_store(backend_name, db_path)
     
     # CSV output for measurements
-    csv_path = PLOTS_DIR / f"{backend_name}.csv"
-    csv_file = open(csv_path, "w", newline="")
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["height", "wall_seconds", "blocks_per_sec", "coins_in_db", "db_size_bytes", "rss_mb"])
+    if resume_from is not None and csv_path.exists():
+        csv_file = open(csv_path, "a", newline="")
+        csv_writer = csv.writer(csv_file)
+    else:
+        csv_file = open(csv_path, "w", newline="")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(["height", "wall_seconds", "blocks_per_sec", "coins_in_db", "db_size_bytes", "rss_mb"])
     
     # Replay loop
     start_time = time.time()
@@ -138,12 +204,23 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
     rewind_test_data = []
     
     progress = {"pct": 0.0}
-    for height, timestamp, block_hash, created_coins, spent_ids in read_extract(EXTRACT_FILE, progress):
+    skip_below = resume_from + 1 if resume_from is not None else None
+    for height, timestamp, block_hash, created_coins, spent_ids in read_extract(EXTRACT_FILE, progress, skip_below):
         if max_height is not None and height > max_height:
             break
         
         tx_blocks += 1
         total_spends += len(spent_ids)
+        
+        # Already applied in a previous run: counted, not re-processed.
+        # Keep the clocks pinned to "now" so skip time doesn't count as
+        # replay time in wall_seconds or the first blk/s measurement.
+        if resume_from is not None and height <= resume_from:
+            start_time = last_measurement = time.time()
+            if HEARTBEAT_FILE and time.time() - last_heartbeat > 60:
+                update_heartbeat(f"Replaying {backend_name}: skipping to resume point {resume_from:,} (at {height:,})")
+                last_heartbeat = time.time()
+            continue
         
         # Process block
         try:
@@ -165,7 +242,7 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
             now = time.time()
             elapsed = now - last_measurement
             blocks_per_sec = blocks_since_measurement / elapsed if elapsed > 0 else 0
-            wall_seconds = now - start_time
+            wall_seconds = wall_offset + (now - start_time)
             
             coins_in_db = store.num_coins()
             db_size = store.db_size()
@@ -198,7 +275,7 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
     csv_file.close()
     
     # Final stats
-    final_time = time.time() - start_time
+    final_time = wall_offset + (time.time() - start_time)
     peak = store.peak()
     final_height = peak[0] if peak else 0
     final_size = store.db_size()
@@ -330,6 +407,15 @@ def write_report(results: list[dict], extract_stats: dict):
 
 
 def main():
+    # RocksDB opens every SST file; at mainnet scale that's thousands. The
+    # default soft limit (often 1024, e.g. under tmux) kills the run at
+    # ~50 GB of DB ("Too many open files"), so raise it to the hard limit.
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft < hard:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+        print(f"Raised RLIMIT_NOFILE: {soft} -> {hard}")
+    
     if not EXTRACT_FILE.exists():
         print(f"ERROR: Extract file {EXTRACT_FILE} not found")
         print("Run extract.py first")
