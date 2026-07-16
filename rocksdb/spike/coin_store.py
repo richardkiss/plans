@@ -344,6 +344,13 @@ class RocksStore:
             batch.put(b"c" + nc.coin_id, bytes(cr))
             ephemeral[nc.coin_id] = cr
         
+        # Batch-fetch all non-ephemeral spent coins in one MultiGet
+        lookup_ids = [cid for cid in spent_coin_ids if cid not in ephemeral]
+        fetched = (
+            dict(zip(lookup_ids, self.db.get([b"c" + cid for cid in lookup_ids])))
+            if lookup_ids else {}
+        )
+        
         # Mark spends
         for coin_id in spent_coin_ids:
             if coin_id in ephemeral:
@@ -353,7 +360,7 @@ class RocksStore:
                 spent_records.append(cr)
                 batch.put(b"c" + coin_id, bytes(cr))
             else:
-                coin_blob = self.db.get(b"c" + coin_id)
+                coin_blob = fetched[coin_id]
                 if coin_blob is None:
                     raise ValueError(f"Spent coin {coin_id.hex()} not found")
                 
@@ -436,14 +443,10 @@ class RocksStore:
         self.db.write(batch)
     
     def get_coin_records(self, coin_ids: list[bytes]) -> list[CoinRecord | None]:
-        results = []
-        for coin_id in coin_ids:
-            coin_blob = self.db.get(b"c" + coin_id)
-            if coin_blob is None:
-                results.append(None)
-            else:
-                results.append(CoinRecord.from_bytes(coin_blob))
-        return results
+        if not coin_ids:
+            return []
+        blobs = self.db.get([b"c" + coin_id for coin_id in coin_ids])
+        return [None if b is None else CoinRecord.from_bytes(b) for b in blobs]
     
     def peak(self) -> tuple[int, bytes] | None:
         peak_blob = self.db.get(b"p")
@@ -496,6 +499,13 @@ class RocksLeanStore(RocksStore):
             batch.put(b"c" + nc.coin_id, bytes(cr))
             ephemeral[nc.coin_id] = cr
         
+        # Batch-fetch all non-ephemeral spent coins in one MultiGet
+        lookup_ids = [cid for cid in spent_coin_ids if cid not in ephemeral]
+        fetched = (
+            dict(zip(lookup_ids, self.db.get([b"c" + cid for cid in lookup_ids])))
+            if lookup_ids else {}
+        )
+        
         # Delete spent coins and save full records in undo
         for coin_id in spent_coin_ids:
             if coin_id in ephemeral:
@@ -506,7 +516,7 @@ class RocksLeanStore(RocksStore):
                 spent_records.append(cr)
                 batch.delete(b"c" + coin_id)
             else:
-                coin_blob = self.db.get(b"c" + coin_id)
+                coin_blob = fetched[coin_id]
                 if coin_blob is None:
                     raise ValueError(f"Spent coin {coin_id.hex()} not found")
                 
