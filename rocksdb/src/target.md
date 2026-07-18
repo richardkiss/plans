@@ -28,6 +28,15 @@ Coins (creates + deletes), the block's undo record, and the peak update go
 in *one* RocksDB WriteBatch. This is the load-bearing property: a crash at
 any point leaves the store at a consistent block boundary.
 
+It also settles durability: the peak key doubles as the commit record, so
+there's no per-block fsync. A process crash loses nothing (the WAL is in
+the page cache); power loss loses an unsynced WAL tail, but recovery
+replays a clean prefix — the store comes back "exactly as of height H" and
+the missing blocks are re-fetched from the network. Blockchain state is
+re-derivable, which is the ideal case for relaxed durability. Hygiene
+still applies: keep the WAL enabled, flush it on clean shutdown, and
+optionally sync every N blocks to bound worst-case re-sync.
+
 I learned this the hard way. The earlier db_v3 experiment put coins in
 RocksDB while block records and peak stayed in SQLite, and a crash mid-reorg
 could corrupt state across the two databases. No design that splits the

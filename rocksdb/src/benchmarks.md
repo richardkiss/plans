@@ -115,10 +115,14 @@ Read these before quoting the numbers.
 - **Storage layer only.** Real sync also pays signature verification and
   CLVM execution. This isolates the coin-store cost; it does *not* predict
   end-to-end sync speedup.
-- **Durability configs are comparable but not rigorous.** SQLite ran
-  WAL/synchronous=NORMAL; RocksDB ran its default WAL without per-write
-  fsync. Neither side fsyncs per block, so the comparison is fair-ish, but
-  I didn't measure a strict-durability variant.
+- **Durability posture is deliberate, not an oversight.** RocksDB runs its
+  default WAL with sync=false; SQLite runs WAL + synchronous=NORMAL.
+  Neither fsyncs per block, so the comparison is fair — and for the target
+  design, no-fsync is correct by construction: the peak update rides in the
+  same atomic WriteBatch as the coins, so the peak key *is* the commit
+  record, and any crash recovers to a clean "as of height H" state (see
+  [Target design](target.md)). I didn't measure a strict-durability
+  variant; it isn't the design point.
 - **Page-cache effects.** The replayed DBs (3–8 GB) approach the host's
   15 GB RAM. I planned a memory-capped (2 GB cgroup) rerun of the most
   interesting pair and didn't do it; on a truly RAM-starved box I'd expect
