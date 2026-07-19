@@ -434,12 +434,20 @@ def main():
     
     # Run each backend sequentially, fastest first, so results arrive in
     # increasing runtime order (rocks pair: <1h each; sqlite: tens of hours).
-    backends = [
-        ("rocks", Path("db_rocks")),
-        ("rocks-lean", Path("db_rocks_lean")),
-        ("sqlite-consensus", Path("db_sqlite_consensus.db")),
-        ("sqlite-full", Path("db_sqlite_full.db")),
-    ]
+    all_backends = {
+        "rocks": Path("db_rocks"),
+        "rocks-lean": Path("db_rocks_lean"),
+        "sqlite-consensus": Path("db_sqlite_consensus.db"),
+        "sqlite-full": Path("db_sqlite_full.db"),
+    }
+    # SPIKE_BACKENDS=rocks,rocks-lean selects a subset (default: all four)
+    selected = os.environ.get("SPIKE_BACKENDS")
+    names = [n.strip() for n in selected.split(",")] if selected else list(all_backends)
+    for n in names:
+        if n not in all_backends:
+            print(f"ERROR: unknown backend {n!r} in SPIKE_BACKENDS")
+            sys.exit(1)
+    backends = [(n, all_backends[n]) for n in names]
     
     results = []
     
