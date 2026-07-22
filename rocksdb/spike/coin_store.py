@@ -391,6 +391,89 @@ class RocksStore:
         self.db.write(batch)
         return spent_records
     
+    def process_spends_multi(
+        self,
+        blocks: list[tuple[int, bytes, int, list[NewCoin], list[bytes]]],
+    ) -> list[list[CoinRecord]]:
+        """
+        Apply several blocks as ONE WriteBatch (one commit, one MultiGet).
+        Undo info stays per-block, so rewind granularity is unchanged.
+        Coins created and spent within the window are written once, already
+        flagged spent, instead of a put followed by an overwrite.
+        Each element of `blocks` is (block_index, block_hash, timestamp,
+        new_coins, spent_coin_ids). Returns spent records per block.
+        """
+        batch = WriteBatch()
+        
+        # Pass 1: index window-created coins and where each coin is spent.
+        window: dict[bytes, tuple[int, NewCoin, int]] = {}  # coin_id -> (created_height, nc, timestamp)
+        spent_at: dict[bytes, int] = {}
+        lookup_ids = []
+        for block_index, _bh, timestamp, new_coins, spent_coin_ids in blocks:
+            for nc in new_coins:
+                window[nc.coin_id] = (block_index, nc, timestamp)
+            for coin_id in spent_coin_ids:
+                if coin_id in spent_at:
+                    raise ValueError(f"Coin {coin_id.hex()} spent twice in batch window")
+                spent_at[coin_id] = block_index
+                if coin_id not in window:
+                    lookup_ids.append(coin_id)
+        
+        fetched = (
+            dict(zip(lookup_ids, self.db.get([b"c" + cid for cid in lookup_ids])))
+            if lookup_ids else {}
+        )
+        
+        # Pass 2: writes, per-block undo, spent records.
+        all_spent_records: list[list[CoinRecord]] = []
+        for block_index, block_hash, timestamp, new_coins, spent_coin_ids in blocks:
+            spent_records = []
+            
+            for nc in new_coins:
+                coin = Coin(bytes32(nc.parent), bytes32(nc.puzzle_hash), uint64(nc.amount))
+                spent_idx = spent_at.get(nc.coin_id, 0)
+                cr = CoinRecord(coin, uint32(block_index), uint32(spent_idx),
+                                nc.coinbase, uint64(timestamp))
+                batch.put(b"c" + nc.coin_id, bytes(cr))
+            
+            for coin_id in spent_coin_ids:
+                if coin_id in window:
+                    created_height, nc, created_ts = window[coin_id]
+                    coin = Coin(bytes32(nc.parent), bytes32(nc.puzzle_hash), uint64(nc.amount))
+                    cr = CoinRecord(coin, uint32(created_height), uint32(block_index),
+                                    nc.coinbase, uint64(created_ts))
+                    spent_records.append(cr)
+                    # Already written flagged-spent in the creation pass.
+                else:
+                    coin_blob = fetched[coin_id]
+                    if coin_blob is None:
+                        raise ValueError(f"Spent coin {coin_id.hex()} not found")
+                    cr = CoinRecord.from_bytes(coin_blob)
+                    if cr.spent_block_index != 0:
+                        raise ValueError(f"Coin {coin_id.hex()} already spent at height {cr.spent_block_index}")
+                    cr = CoinRecord(cr.coin, cr.confirmed_block_index, uint32(block_index),
+                                    cr.coinbase, cr.timestamp)
+                    spent_records.append(cr)
+                    batch.put(b"c" + coin_id, bytes(cr))
+            
+            undo_data = struct.pack(">Q", timestamp)
+            undo_data += struct.pack(">I", len(new_coins))
+            for nc in new_coins:
+                undo_data += nc.coin_id
+            undo_data += struct.pack(">I", len(spent_coin_ids))
+            for coin_id in spent_coin_ids:
+                undo_data += coin_id
+            batch.put(b"b" + struct.pack(">I", block_index), undo_data)
+            
+            all_spent_records.append(spent_records)
+        
+        # Single peak update: the last block is the commit point.
+        last_index, last_hash = blocks[-1][0], blocks[-1][1]
+        batch.put(b"p", struct.pack(">I", last_index) + last_hash)
+        
+        self.db.write(batch)
+        return all_spent_records
+    
     def rewind_to_block(self, block_index: int) -> None:
         batch = WriteBatch()
         
@@ -547,6 +630,85 @@ class RocksLeanStore(RocksStore):
         
         self.db.write(batch)
         return spent_records
+    
+    def process_spends_multi(
+        self,
+        blocks: list[tuple[int, bytes, int, list[NewCoin], list[bytes]]],
+    ) -> list[list[CoinRecord]]:
+        """
+        Lean variant of the multi-block WriteBatch: coins created AND spent
+        within the window never touch the DB at all (no put, no delete).
+        Undo info stays per-block with full spent CoinRecords, so rewind to
+        any height inside the window still works.
+        """
+        batch = WriteBatch()
+        
+        window: dict[bytes, tuple[int, NewCoin, int]] = {}
+        spent_at: dict[bytes, int] = {}
+        lookup_ids = []
+        for block_index, _bh, timestamp, new_coins, spent_coin_ids in blocks:
+            for nc in new_coins:
+                window[nc.coin_id] = (block_index, nc, timestamp)
+            for coin_id in spent_coin_ids:
+                if coin_id in spent_at:
+                    raise ValueError(f"Coin {coin_id.hex()} spent twice in batch window")
+                spent_at[coin_id] = block_index
+                if coin_id not in window:
+                    lookup_ids.append(coin_id)
+        
+        fetched = (
+            dict(zip(lookup_ids, self.db.get([b"c" + cid for cid in lookup_ids])))
+            if lookup_ids else {}
+        )
+        
+        all_spent_records: list[list[CoinRecord]] = []
+        for block_index, block_hash, timestamp, new_coins, spent_coin_ids in blocks:
+            spent_records = []
+            
+            for nc in new_coins:
+                if nc.coin_id in spent_at:
+                    continue  # window-ephemeral: never touches the DB
+                coin = Coin(bytes32(nc.parent), bytes32(nc.puzzle_hash), uint64(nc.amount))
+                cr = CoinRecord(coin, uint32(block_index), uint32(0),
+                                nc.coinbase, uint64(timestamp))
+                batch.put(b"c" + nc.coin_id, bytes(cr))
+            
+            for coin_id in spent_coin_ids:
+                if coin_id in window:
+                    created_height, nc, created_ts = window[coin_id]
+                    coin = Coin(bytes32(nc.parent), bytes32(nc.puzzle_hash), uint64(nc.amount))
+                    cr = CoinRecord(coin, uint32(created_height), uint32(block_index),
+                                    nc.coinbase, uint64(created_ts))
+                    spent_records.append(cr)
+                    # No delete needed: the put was skipped above.
+                else:
+                    coin_blob = fetched[coin_id]
+                    if coin_blob is None:
+                        raise ValueError(f"Spent coin {coin_id.hex()} not found")
+                    cr = CoinRecord.from_bytes(coin_blob)
+                    if cr.spent_block_index != 0:
+                        raise ValueError(f"Coin {coin_id.hex()} already spent")
+                    cr = CoinRecord(cr.coin, cr.confirmed_block_index, uint32(block_index),
+                                    cr.coinbase, cr.timestamp)
+                    spent_records.append(cr)
+                    batch.delete(b"c" + coin_id)
+            
+            undo_data = struct.pack(">Q", timestamp)
+            undo_data += struct.pack(">I", len(new_coins))
+            for nc in new_coins:
+                undo_data += nc.coin_id
+            undo_data += struct.pack(">I", len(spent_records))
+            for cr in spent_records:
+                undo_data += bytes(cr)  # Full CoinRecord
+            batch.put(b"b" + struct.pack(">I", block_index), undo_data)
+            
+            all_spent_records.append(spent_records)
+        
+        last_index, last_hash = blocks[-1][0], blocks[-1][1]
+        batch.put(b"p", struct.pack(">I", last_index) + last_hash)
+        
+        self.db.write(batch)
+        return all_spent_records
     
     def rewind_to_block(self, block_index: int) -> None:
         batch = WriteBatch()

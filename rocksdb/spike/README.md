@@ -26,5 +26,13 @@ uvx --from "$SPIKE" spike-replay
 report to `report.md` (override with `SPIKE_REPORT_FILE`). Progress can be
 mirrored to a heartbeat file via `SPIKE_HEARTBEAT_FILE`.
 
+More replay knobs, all env vars:
+
+- `SPIKE_BACKENDS=rocks,rocks-lean` — run a subset of backends.
+- `SPIKE_BATCH_BLOCKS=N` — rocks backends only: apply N blocks per atomic
+  WriteBatch (one commit, one MultiGet; cross-block ephemeral coins skip
+  the DB). Undo info stays per-block, so rewind granularity is unchanged.
+- `SPIKE_RESUME=1` — resume a crashed run from the existing DB's peak.
+
 Mind the disk budget: the four databases peak at ~8 GB each; they are
 deleted after each backend finishes.

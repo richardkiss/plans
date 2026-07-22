@@ -191,6 +191,20 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(["height", "wall_seconds", "blocks_per_sec", "coins_in_db", "db_size_bytes", "rss_mb"])
     
+    # Multi-block WriteBatch mode (SPIKE_BATCH_BLOCKS=N, rocks backends only):
+    # buffer N blocks and apply them as one atomic batch. Flushed at
+    # measurement boundaries so the CSVs stay comparable.
+    batch_blocks = int(os.environ.get("SPIKE_BATCH_BLOCKS", "0"))
+    use_multi = batch_blocks > 1 and hasattr(store, "process_spends_multi")
+    if use_multi:
+        print(f"  Multi-block WriteBatch mode: {batch_blocks} blocks per batch")
+    block_buffer = []
+    
+    def flush_buffer():
+        if block_buffer:
+            store.process_spends_multi(block_buffer)
+            block_buffer.clear()
+    
     # Replay loop
     start_time = time.time()
     last_measurement = start_time
@@ -224,7 +238,12 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
         
         # Process block
         try:
-            store.process_spends(height, block_hash, timestamp, created_coins, spent_ids)
+            if use_multi:
+                block_buffer.append((height, block_hash, timestamp, created_coins, spent_ids))
+                if len(block_buffer) >= batch_blocks or height % MEASUREMENT_INTERVAL == 0:
+                    flush_buffer()
+            else:
+                store.process_spends(height, block_hash, timestamp, created_coins, spent_ids)
         except Exception as e:
             print(f"ERROR at height {height}: {e}")
             raise
@@ -271,6 +290,9 @@ def replay_backend(backend_name: str, db_path: Path, max_height: int | None = No
         #     print(f"  Rewind test at height {height}")
         #     ...
         #     last_rewind_test = height
+    
+    if use_multi:
+        flush_buffer()
     
     csv_file.close()
     

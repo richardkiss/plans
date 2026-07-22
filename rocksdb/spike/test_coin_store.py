@@ -189,6 +189,79 @@ def test_double_spend_detection(backend, temp_dir):
     store.close()
 
 
+@pytest.mark.parametrize("backend", ["rocks", "rocks-lean"])
+def test_multi_block_batch_matches_single(backend, temp_dir):
+    """process_spends_multi over N blocks == N single process_spends calls."""
+    # Blocks: 1 creates a+b; 2 creates c+d and spends a; 3 spends b and d.
+    a, b, c, d = (make_new_coin(f"p-{i}", f"z-{i}", 100 + i) for i in range(4))
+    blocks = [
+        (1, make_coin_id("block", 1), 1000, [a, b], []),
+        (2, make_coin_id("block", 2), 2000, [c, d], [a.coin_id]),
+        (3, make_coin_id("block", 3), 3000, [], [b.coin_id, d.coin_id]),
+    ]
+    all_ids = [x.coin_id for x in (a, b, c, d)]
+    
+    single = create_store(backend, temp_dir / "single")
+    for blk in blocks:
+        single.process_spends(*blk)
+    
+    multi = create_store(backend, temp_dir / "multi")
+    per_block = multi.process_spends_multi(blocks)
+    
+    assert [len(s) for s in per_block] == [0, 1, 2]
+    assert multi.peak() == single.peak()
+    
+    for r_s, r_m in zip(single.get_coin_records(all_ids), multi.get_coin_records(all_ids)):
+        assert (r_s is None) == (r_m is None)
+        if r_s is not None:
+            assert bytes(r_s) == bytes(r_m)
+    
+    single.close()
+    multi.close()
+
+
+@pytest.mark.parametrize("backend", ["rocks", "rocks-lean"])
+def test_multi_block_window_ephemeral_and_rewind(backend, temp_dir):
+    """A coin created and spent in different blocks of one batch survives
+    rewind to a height between creation and spend."""
+    a = make_new_coin("p-a", "z-a", 500)
+    keeper = make_new_coin("p-k", "z-k", 900)
+    blocks = [
+        (1, make_coin_id("block", 1), 1000, [keeper], []),
+        (2, make_coin_id("block", 2), 2000, [a], []),
+        (3, make_coin_id("block", 3), 3000, [], [a.coin_id]),
+    ]
+    store = create_store(backend, temp_dir / backend)
+    store.process_spends_multi(blocks)
+    
+    if backend == "rocks":
+        (r,) = store.get_coin_records([a.coin_id])
+        assert r is not None and r.spent_block_index == 3
+    else:
+        assert store.get_coin_records([a.coin_id]) == [None]
+    
+    # Rewind into the middle of the window: a exists again, unspent.
+    store.rewind_to_block(2)
+    (r,) = store.get_coin_records([a.coin_id])
+    assert r is not None
+    assert r.confirmed_block_index == 2 and r.spent_block_index == 0
+    
+    # Rewind below the window: a is gone, keeper remains.
+    store.rewind_to_block(1)
+    assert store.get_coin_records([a.coin_id]) == [None]
+    (rk,) = store.get_coin_records([keeper.coin_id])
+    assert rk is not None
+    
+    # Double spend within one window is rejected.
+    with pytest.raises(ValueError, match="spent twice"):
+        store.process_spends_multi([
+            (2, make_coin_id("block", 2), 2000, [], [keeper.coin_id]),
+            (3, make_coin_id("block", 3), 3000, [], [keeper.coin_id]),
+        ])
+    
+    store.close()
+
+
 def main():
     raise SystemExit(pytest.main([__file__, "-v"]))
 
