@@ -1,0 +1,306 @@
+Loading operations per block from extract...
+  Loaded 3,092,383 blocks
+
+Enriching rocks-lean.csv...
+  Wrote plots/rocks-lean_enriched.csv
+
+======================================================================
+Marginal Cost Analysis: rocks-lean
+======================================================================
+
+100-200k (Small DB)
+  Sample points: 6
+  Ops/block range: 6 - 6
+  Fixed overhead: -0.21 ms/block
+  Marginal cost: 0.04 ms/op (44 μs/op)
+  R²: 0.217
+  At 6 ops/block: 118849 ops/sec
+
+300-400k
+  Sample points: 2
+  Ops/block range: 54 - 62
+  Fixed overhead: -0.20 ms/block
+  Marginal cost: 0.01 ms/op (9 μs/op)
+  R²: 1.000
+  At 58 ops/block: 198291 ops/sec
+
+700-800k
+  Sample points: 3
+  Ops/block range: 147 - 190
+  Fixed overhead: 0.83 ms/block
+  Marginal cost: 0.00 ms/op (3 μs/op)
+  R²: 0.059
+  At 156 ops/block: 124114 ops/sec
+
+900k-1M
+  Sample points: 2
+  Ops/block range: 157 - 167
+  Fixed overhead: -11.58 ms/block
+  Marginal cost: 0.08 ms/op (83 μs/op)
+  R²: 1.000
+  At 162 ops/block: 88542 ops/sec
+
+1.6-2.1M (dust)
+  Sample points: 25
+  Ops/block range: 79 - 1375
+  Fixed overhead: 30.17 ms/block
+  Marginal cost: -0.00 ms/op (-4 μs/op)
+  R²: 0.027
+  At 871 ops/block: 32566 ops/sec
+
+2.5-3.5M
+  Sample points: 35
+  Ops/block range: 64 - 444
+  Fixed overhead: 16.76 ms/block
+  Marginal cost: 0.03 ms/op (25 μs/op)
+  R²: 0.024
+  At 96 ops/block: 4986 ops/sec
+
+4.6-5.1M (dust 2)
+  Sample points: 17
+  Ops/block range: 90 - 1329
+  Fixed overhead: 31.19 ms/block
+  Marginal cost: 0.00 ms/op (1 μs/op)
+  R²: 0.001
+  At 636 ops/block: 19886 ops/sec
+
+6-7M
+  Sample points: 37
+  Ops/block range: 43 - 128
+  Fixed overhead: 4.70 ms/block
+  Marginal cost: 0.32 ms/op (320 μs/op)
+  R²: 0.175
+  At 62 ops/block: 2527 ops/sec
+
+7.5-8.5M (late chain)
+  Sample points: 24
+  Ops/block range: 43 - 155
+  Fixed overhead: 28.73 ms/block
+  Marginal cost: -0.11 ms/op (-115 μs/op)
+  R²: 0.030
+  At 54 ops/block: 2413 ops/sec
+
+Enriching rocks.csv...
+  Wrote plots/rocks_enriched.csv
+
+======================================================================
+Marginal Cost Analysis: rocks
+======================================================================
+
+100-200k (Small DB)
+  Sample points: 6
+  Ops/block range: 6 - 6
+  Fixed overhead: 0.47 ms/block
+  Marginal cost: -0.06 ms/op (-63 μs/op)
+  R²: 0.070
+  At 6 ops/block: 52749 ops/sec
+
+300-400k
+  Sample points: 2
+  Ops/block range: 54 - 62
+  Fixed overhead: 1.31 ms/block
+  Marginal cost: -0.01 ms/op (-9 μs/op)
+  R²: 1.000
+  At 58 ops/block: 73415 ops/sec
+
+700-800k
+  Sample points: 3
+  Ops/block range: 147 - 190
+  Fixed overhead: 0.53 ms/block
+  Marginal cost: 0.01 ms/op (6 μs/op)
+  R²: 0.189
+  At 156 ops/block: 105831 ops/sec
+
+900k-1M
+  Sample points: 2
+  Ops/block range: 157 - 167
+  Fixed overhead: -14.86 ms/block
+  Marginal cost: 0.11 ms/op (105 μs/op)
+  R²: 1.000
+  At 162 ops/block: 72691 ops/sec
+
+1.6-2.1M (dust)
+  Sample points: 25
+  Ops/block range: 79 - 1375
+  Fixed overhead: 32.58 ms/block
+  Marginal cost: -0.01 ms/op (-5 μs/op)
+  R²: 0.038
+  At 871 ops/block: 30880 ops/sec
+
+2.5-3.5M
+  Sample points: 35
+  Ops/block range: 64 - 444
+  Fixed overhead: 18.67 ms/block
+  Marginal cost: 0.03 ms/op (35 μs/op)
+  R²: 0.033
+  At 96 ops/block: 4355 ops/sec
+
+4.6-5.1M (dust 2)
+  Sample points: 17
+  Ops/block range: 90 - 1329
+  Fixed overhead: 43.04 ms/block
+  Marginal cost: -0.01 ms/op (-8 μs/op)
+  R²: 0.024
+  At 636 ops/block: 16895 ops/sec
+
+6-7M
+  Sample points: 37
+  Ops/block range: 43 - 128
+  Fixed overhead: 7.41 ms/block
+  Marginal cost: 0.40 ms/op (402 μs/op)
+  R²: 0.172
+  At 62 ops/block: 1918 ops/sec
+
+7.5-8.5M (late chain)
+  Sample points: 24
+  Ops/block range: 43 - 155
+  Fixed overhead: 37.90 ms/block
+  Marginal cost: -0.15 ms/op (-155 μs/op)
+  R²: 0.034
+  At 54 ops/block: 1840 ops/sec
+
+Enriching sqlite-consensus.csv...
+  Wrote plots/sqlite-consensus_enriched.csv
+
+======================================================================
+Marginal Cost Analysis: sqlite-consensus
+======================================================================
+
+100-200k (Small DB)
+  Sample points: 6
+  Ops/block range: 6 - 6
+  Fixed overhead: 12.07 ms/block
+  Marginal cost: -1.90 ms/op (-1898 μs/op)
+  R²: 0.196
+  At 6 ops/block: 5451 ops/sec
+
+300-400k
+  Sample points: 2
+  Ops/block range: 54 - 62
+  Fixed overhead: -3.62 ms/block
+  Marginal cost: 0.21 ms/op (214 μs/op)
+  R²: 1.000
+  At 58 ops/block: 6597 ops/sec
+
+700-800k
+  Sample points: 3
+  Ops/block range: 147 - 190
+  Fixed overhead: 13.14 ms/block
+  Marginal cost: 0.19 ms/op (192 μs/op)
+  R²: 0.788
+  At 156 ops/block: 3614 ops/sec
+
+900k-1M
+  Sample points: 2
+  Ops/block range: 157 - 167
+  Fixed overhead: 72.98 ms/block
+  Marginal cost: -0.11 ms/op (-114 μs/op)
+  R²: 1.000
+  At 162 ops/block: 2972 ops/sec
+
+1.6-2.1M (dust)
+  Sample points: 25
+  Ops/block range: 79 - 1375
+  Fixed overhead: 100.70 ms/block
+  Marginal cost: 0.37 ms/op (371 μs/op)
+  R²: 0.732
+  At 871 ops/block: 2057 ops/sec
+
+2.5-3.5M
+  Sample points: 35
+  Ops/block range: 64 - 444
+  Fixed overhead: 7.15 ms/block
+  Marginal cost: 0.75 ms/op (754 μs/op)
+  R²: 0.832
+  At 96 ops/block: 1207 ops/sec
+
+4.6-5.1M (dust 2)
+  Sample points: 17
+  Ops/block range: 90 - 1329
+  Fixed overhead: 139.05 ms/block
+  Marginal cost: 0.47 ms/op (473 μs/op)
+  R²: 0.743
+  At 636 ops/block: 1446 ops/sec
+
+6-7M
+  Sample points: 37
+  Ops/block range: 43 - 128
+  Fixed overhead: 3.25 ms/block
+  Marginal cost: 1.07 ms/op (1067 μs/op)
+  R²: 0.703
+  At 62 ops/block: 893 ops/sec
+
+7.5-8.5M (late chain)
+  Sample points: 24
+  Ops/block range: 43 - 155
+  Fixed overhead: 33.57 ms/block
+  Marginal cost: 0.42 ms/op (425 μs/op)
+  R²: 0.176
+  At 54 ops/block: 959 ops/sec
+
+Enriching sqlite-full-1m.csv...
+  Wrote plots/sqlite-full-1m_enriched.csv
+
+======================================================================
+Marginal Cost Analysis: sqlite-full-1m
+======================================================================
+
+100-200k (Small DB)
+  Sample points: 6
+  Ops/block range: 6 - 6
+  Fixed overhead: 11.40 ms/block
+  Marginal cost: -1.80 ms/op (-1801 μs/op)
+  R²: 0.210
+  At 6 ops/block: 6099 ops/sec
+
+300-400k
+  Sample points: 2
+  Ops/block range: 54 - 62
+  Fixed overhead: 28.39 ms/block
+  Marginal cost: -0.34 ms/op (-338 μs/op)
+  R²: 1.000
+  At 58 ops/block: 6524 ops/sec
+
+700-800k
+  Sample points: 3
+  Ops/block range: 147 - 190
+  Fixed overhead: 12.49 ms/block
+  Marginal cost: 0.36 ms/op (360 μs/op)
+  R²: 0.920
+  At 156 ops/block: 2273 ops/sec
+
+900k-1M
+  Sample points: 2
+  Ops/block range: 157 - 167
+  Fixed overhead: -33.71 ms/block
+  Marginal cost: 0.92 ms/op (916 μs/op)
+  R²: 1.000
+  At 162 ops/block: 1412 ops/sec
+
+======================================================================
+Summary: Marginal Cost Degradation
+======================================================================
+
+rocks-lean:
+  Early marginal: 44 μs/op
+  Late marginal:  -115 μs/op
+  Degradation:    -2.6x
+  Ops/sec degradation: 49.3x
+
+rocks:
+  Early marginal: -63 μs/op
+  Late marginal:  -155 μs/op
+  Degradation:    0.0x
+  Ops/sec degradation: 28.7x
+
+sqlite-consensus:
+  Early marginal: -1898 μs/op
+  Late marginal:  425 μs/op
+  Degradation:    0.0x
+  Ops/sec degradation: 5.7x
+
+sqlite-full-1m:
+  Early marginal: -1801 μs/op
+  Late marginal:  916 μs/op
+  Degradation:    0.0x
+  Ops/sec degradation: 4.3x

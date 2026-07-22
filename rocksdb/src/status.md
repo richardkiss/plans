@@ -2,6 +2,22 @@
 
 Living page. Dated entries, newest first.
 
+## 2026-07-21 — Full-mainnet replay complete
+
+- The full-history replay (heights 0–8.58M, 408.55M coins) finished for
+  three backends: `rocks` 14.8 h, `rocks-lean` 12.9 h, `sqlite-consensus`
+  101.1 h. Full-chain gap is ~7–8x on wall time, ~10x in the dust
+  segments. Results, plots, and caveats in [Benchmarks](benchmarks.md).
+- `sqlite-full` was skipped deliberately — extrapolation put it over a
+  week, and `sqlite-consensus` already bounds SQLite's best case.
+- MultiGet batching of spent-coin lookups measured against a sequential
+  baseline: 1.16x wall-clock to height 4.9M. Real but modest.
+- Next experiment: multi-block WriteBatch (`SPIKE_BATCH_BLOCKS=N`) —
+  apply N blocks as one atomic batch. Amortizes per-block overhead, feeds
+  MultiGet bigger key sets, and cross-block ephemeral coins (created and
+  spent inside the window) never touch the DB. Undo info stays per-block,
+  so rewind granularity is unchanged. Rocks backends re-run starting now.
+
 ## 2026-07-15 — Spike complete; Phase 1 in progress
 
 - Full-mainnet benchmark underway. Extraction of all 8.5M blocks (~408M

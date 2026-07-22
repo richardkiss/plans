@@ -92,13 +92,18 @@ def analyze_marginal_cost(backend_name, enriched_data, block_ops):
     print(f"Marginal Cost Analysis: {backend_name}")
     print(f"{'='*70}")
     
-    # Define height ranges for analysis
+    # Define height ranges for analysis (covers 1M-capped and full-chain runs)
     ranges = [
         (100000, 200000, "100-200k (Small DB)"),
-        (300000, 400000, "300-400k (~1GB)"),
-        (500000, 600000, "500-600k (~3GB)"),
-        (700000, 800000, "700-800k (~5GB)"),
-        (900000, 1000000, "900k-1M (~8GB)"),
+        (300000, 400000, "300-400k"),
+        (500000, 600000, "500-600k"),
+        (700000, 800000, "700-800k"),
+        (900000, 1000000, "900k-1M"),
+        (1600000, 2100000, "1.6-2.1M (dust)"),
+        (2500000, 3500000, "2.5-3.5M"),
+        (4600000, 5100000, "4.6-5.1M (dust 2)"),
+        (6000000, 7000000, "6-7M"),
+        (7500000, 8500000, "7.5-8.5M (late chain)"),
     ]
     
     results = []
