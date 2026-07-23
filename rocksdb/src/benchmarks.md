@@ -110,8 +110,32 @@ improvement, though the per-interval medians are closer to 1.02–1.04x and
 CPU contention from another VM muddies the early segments (logged in
 [`plots/full/contention-notes.md`](https://github.com/richardkiss/plans/tree/main/rocksdb/spike/plots/full)).
 Real but modest — batching did not explain the block-time variance I hoped
-it would. A multi-block WriteBatch experiment is next; see
-[Status](status.md).
+it would.
+
+### Multi-block WriteBatch: a negative result
+
+The follow-up experiment applied 100 blocks per atomic WriteBatch
+(`SPIKE_BATCH_BLOCKS=100`): one commit and one MultiGet per window, and
+coins created and spent inside the window never touch the DB at all in
+`rocks-lean`. Undo info stays per-block, so rewind granularity is
+unchanged. I expected this to shine in the dust segments. It didn't:
+
+| Backend | Unbatched | Batched (N=100) | Delta |
+|---|---|---|---|
+| rocks | 53,277 s | 57,693 s | 8% slower |
+| rocks-lean | 46,619 s | 48,004 s | 3% slower |
+
+Final heights, sizes, and coin counts match exactly, so the comparison is
+correctness-clean. The segment breakdown inverts the hypothesis: batching
+is a small win on early small blocks (+1–6%) and a loss in the dust
+segments (−8 to −16%), consistent across both backends. My reading: dust
+blocks are already enormous, so the per-block WriteBatch was already
+well-amortized there; grouping 100 of them just builds very large batches
+and lookup windows, and the overhead of holding them beats the saved
+commits. Batching per-key lookups (MultiGet, above) pays; batching
+already-large transactions does not. The batched-run CSVs are in
+`plots/full/` as `*-batch100.csv`, and the mode remains available via
+`SPIKE_BATCH_BLOCKS` for anyone who wants to try other window sizes.
 
 The full-run CSVs, enrichment output, and the sequential baseline live in
 [`rocksdb/spike/plots/full/`](https://github.com/richardkiss/plans/tree/main/rocksdb/spike/plots/full).

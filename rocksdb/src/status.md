@@ -2,6 +2,15 @@
 
 Living page. Dated entries, newest first.
 
+## 2026-07-23 — Multi-block WriteBatch: doesn't pay
+
+- The `SPIKE_BATCH_BLOCKS=100` re-run of both rocks backends finished:
+  8% *slower* for `rocks`, 3% slower for `rocks-lean` than per-block
+  batches. The loss concentrates in the dust segments, where blocks are
+  already huge and per-block WriteBatches were already well-amortized.
+  Details in [Benchmarks](benchmarks.md). Per-block WriteBatch stays the
+  design; MultiGet key batching stays (that one pays).
+
 ## 2026-07-21 — Full-mainnet replay complete
 
 - The full-history replay (heights 0–8.58M, 408.55M coins) finished for
