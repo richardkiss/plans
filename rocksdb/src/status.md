@@ -6,10 +6,10 @@ Living page. Dated entries, newest first.
 
 - The `SPIKE_BATCH_BLOCKS=100` re-run of both rocks backends finished:
   8% *slower* for `rocks`, 3% slower for `rocks-lean` than per-block
-  batches. The loss concentrates in the dust segments, where blocks are
-  already huge and per-block WriteBatches were already well-amortized.
-  Details in [Benchmarks](benchmarks.md). Per-block WriteBatch stays the
-  design; MultiGet key batching stays (that one pays).
+  batches. Most of the loss is in the dust segments, where per-block
+  WriteBatches were already big. Details in [Benchmarks](benchmarks.md).
+  Per-block WriteBatch stays the design; MultiGet key batching stays
+  (that one pays).
 
 ## 2026-07-21 — Full-mainnet replay complete
 
@@ -17,9 +17,9 @@ Living page. Dated entries, newest first.
   three backends: `rocks` 14.8 h, `rocks-lean` 12.9 h, `sqlite-consensus`
   101.1 h. Full-chain gap is ~7–8x on wall time, ~10x in the dust
   segments. Results, plots, and caveats in [Benchmarks](benchmarks.md).
-- `sqlite-full` was skipped deliberately — extrapolation put it over a
-  week, and `sqlite-consensus` already bounds SQLite's best case.
-- MultiGet batching of spent-coin lookups measured against a sequential
+- Skipped `sqlite-full` — it extrapolates to over a week and wouldn't
+  show anything `sqlite-consensus` doesn't.
+- MultiGet batching of spent-coin lookups, measured against a sequential
   baseline: 1.16x wall-clock to height 4.9M. Real but modest.
 - Next experiment: multi-block WriteBatch (`SPIKE_BATCH_BLOCKS=N`) —
   apply N blocks as one atomic batch. Amortizes per-block overhead, feeds

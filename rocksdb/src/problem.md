@@ -6,7 +6,7 @@ Two of those (puzzle hash and parent coin) exist for wallet and explorer
 queries, not for consensus. Every block pays the B-tree maintenance cost for
 all four anyway.
 
-## The store degrades superlinearly
+## It gets slower as the chain grows
 
 SQLite's per-block cost climbs as the database grows. Replaying all of
 mainnet history (details in [Benchmarks](benchmarks.md)), SQLite — even
