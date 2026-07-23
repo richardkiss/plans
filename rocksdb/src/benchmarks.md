@@ -1,8 +1,9 @@
 # Benchmarks
 
 I extracted every transaction block's coin deltas from a synced mainnet
-database, then replayed them through a uniform per-block API against four
-backends, measuring throughput as the database grows.
+database, then replayed all of mainnet history through a uniform
+per-block API against each backend, measuring throughput as the database
+grows.
 
 ## Method
 
@@ -10,8 +11,8 @@ backends, measuring throughput as the database grows.
    215 GB mainnet SQLite DB (every row carries `confirmed_index` and
    `spent_index`, so no blockchain walk is needed), bucketed by height into
    a stream of per-block deltas: timestamp, created coins, spent coins.
-   Serialized as length-prefixed binary, zstd-compressed — 1.5 GB for
-   heights 0 through 1,000,000.
+   Serialized as length-prefixed binary, zstd-compressed — 22 GB for the
+   full chain.
 2. **Replay.** Each backend implements the same minimal API
    (`process_spends` / `rewind_to_block` / `get_coin_records` / `peak`).
    Replay applies each block: multi-get the removals first (as real
@@ -21,10 +22,8 @@ backends, measuring throughput as the database grows.
 3. **Measure.** Wall time, blocks/sec, and on-disk size logged every 10k
    heights.
 
-The first run covered replay to height 1,000,000: 351,808 transaction
-blocks, 22.07M coins created, 9.88M coins spent. The full-history run
-covers all of mainnet — height 8,581,859: 3.09M transaction blocks,
-408.55M coins created, 163.51M spent; the extract is 22 GB compressed.
+The input is all of mainnet — height 8,581,859: 3.09M transaction
+blocks, 408.55M coins created, 163.51M spent.
 
 ## Backends
 
@@ -35,45 +34,14 @@ covers all of mainnet — height 8,581,859: 3.09M transaction blocks,
 | `rocks` | RocksDB; spent coins kept and flagged (db_v3-style schema, peak in the same WriteBatch) |
 | `rocks-lean` | RocksDB; spent coins *deleted*, full spent records preserved in a per-block undo log |
 
-## Results at height 1M (four backends)
+## Results
 
-| Backend | Total time | Avg blk/s | End-of-run blk/s | Final size | Live records |
-|---|---|---|---|---|---|
-| sqlite-full | 14,786 s | 68 | ~8.4 | 7.8 GB | 22.07M |
-| sqlite-consensus | 9,930 s | 101 | ~17 | 5.8 GB | 22.07M |
-| rocks | 377 s | 2,650 | ~230–500 | 3.9 GB | 22.07M |
-| rocks-lean | 320 s | 3,123 | ~350–580 | 3.1 GB | 12.19M |
-
-![Throughput vs block height](assets/throughput.png)
-
-![Database size growth](assets/db_size.png)
-
-## What the curves say
-
-The engine gap is ~40x at height 1M, and it's widening. All the curves
-decay, but SQLite decays into single digits while RocksDB stays in the
-hundreds.
-
-Dropping the explorer indexes only buys SQLite ~1.5–2x. The win is the
-engine — LSM writes and bloom-filtered reads vs B-tree maintenance and
-scattered page reads — not the schema. That's what justifies an engine
-migration rather than just a schema diet.
-
-`rocks-lean` wins on every axis: fastest, smallest on disk, and its working
-set is the UTXO set rather than every coin ever created. On spinning disks
-and small RAM, working-set size is the whole game.
-
-For perspective: even degraded SQLite (8 blk/s) beats mainnet's real block
-production rate (0.31 blk/s). The payoff here is initial-sync speed and
-headroom on weak hardware, not survival.
-
-## Full-history results (three backends)
-
-The same replay over all of mainnet, heights 0 through 8,581,859. I
-skipped `sqlite-full` here: extrapolating from its 1M-run pace and
-`sqlite-consensus`'s measured full-history scaling put it at well over a
-week of wall time, and `sqlite-consensus` already bounds what SQLite can
-do without the explorer indexes.
+Full mainnet history, heights 0 through 8,581,859. `sqlite-full` was not
+run to full height: an earlier 1M-capped run measured it ~1.5x slower
+than `sqlite-consensus` (14,786 s vs 9,930 s to height 1M), which
+extrapolates to well over a week of wall time here, and
+`sqlite-consensus` already bounds what SQLite can do without the
+explorer indexes.
 
 | Backend | Total time | Avg blk/s | Dust segment blk/s | End-of-run blk/s | Final size | Live records |
 |---|---|---|---|---|---|---|
@@ -88,16 +56,31 @@ region, where blocks carry thousands of tiny coins.
 
 ![Full-history database size growth](assets/db_size-full.png)
 
-Over the whole chain the gap is ~7–8x on total wall time (6.8x vs `rocks`,
-7.8x vs `rocks-lean`) — smaller than the ~40x *instantaneous* gap at
-height 1M, because the ratio moves with block content. It is widest where
-it hurts: in the dust segments (~1.6–2.1M and ~4.6–5.1M) SQLite collapses
-to 1–5 blk/s while RocksDB holds 25–50. In wall-clock terms, full replay
-is a half-day on RocksDB and four days plus on SQLite.
+## What the curves say
 
-An operational note that surprised me: `rocks-lean`'s on-disk size
+Over the whole chain the gap is ~7–8x on total wall time (6.8x vs `rocks`,
+7.8x vs `rocks-lean`); the instantaneous gap runs far higher in the easy
+segments (~40x at height 1M). It is widest where it hurts: in the dust
+segments (~1.6–2.1M and ~4.6–5.1M) SQLite collapses to 1–5 blk/s while
+RocksDB holds 25–50. In wall-clock terms, full replay is a half-day on
+RocksDB and four days plus on SQLite.
+
+The win is the engine — LSM writes and bloom-filtered reads vs B-tree
+maintenance and scattered page reads — not the schema. Dropping the
+explorer indexes only bought SQLite ~1.5x in the 1M-capped run, and both
+of those indexes key on effectively random 32-byte hashes, the worst case
+for a B-tree's page cache. That's what justifies an engine migration
+rather than just a schema diet.
+
+`rocks-lean` wins on every axis: fastest, smallest on disk, and its
+working set is the UTXO set (245M records) rather than every coin ever
+created (409M). An operational note that surprised me: its on-disk size
 *dropped* during replay at times — deleting spent coins lets compaction
 reclaim space, something the flag-in-place schemas never do.
+
+For perspective: even degraded SQLite (~15 blk/s) beats mainnet's real
+block production rate (0.31 blk/s). The payoff here is initial-sync speed
+and headroom on weak hardware, not survival.
 
 ### Batched vs sequential spent-coin lookups
 
@@ -161,13 +144,18 @@ Full benchmark (needs a synced mainnet `blockchain_v2_mainnet.sqlite`,
 
 ```bash
 SPIKE="git+https://github.com/richardkiss/plans#subdirectory=rocksdb/spike"
-uvx --from "$SPIKE" spike-extract 1000000   # -> extract.dat.zst (~1.5 GB), height cap optional
+uvx --from "$SPIKE" spike-extract 1000000   # -> extract.dat.zst (~1.5 GB with the 1M cap)
 uvx --from "$SPIKE" spike-replay            # all four backends; ~7.5 h on the reference host
 ```
 
-`spike-replay` writes throughput CSVs and plots to `plots/` and a summary to
-`report.md`. Budget ~10 GB of free disk: each backend's DB peaks at up to
-~8 GB and gets deleted before the next one starts.
+The height cap keeps a reproduction affordable — capped at 1M the whole
+thing runs overnight. Reproducing the full-history numbers means dropping
+the cap: a 22 GB extract, ~100 GB peak DB size, and about five days of
+replay (run `SPIKE_BACKENDS=rocks,rocks-lean` if you only want the
+half-day RocksDB legs).
+
+`spike-replay` writes throughput CSVs and plots to `plots/` and a summary
+to `report.md`. Each backend's DB is deleted before the next one starts.
 
 The published numbers come from **host-1** — a VM with NVMe-backed storage
 and 15 GB RAM. Full specs and notes for comparing runs across machines:
@@ -184,11 +172,10 @@ Read these before quoting the numbers.
   SQLite, so the gap on a real HDD should be *larger* — but that's
   extrapolation until a real-HDD run exists. Details:
   [Benchmark hosts](bench-host.md).
-- **`sqlite-full` has no full-history run.** The four-backend table stops
-  at height 1M; the full-chain run covers three backends. If you need the
-  production schema's full-history number, extrapolate from its 1M-run
-  ratio to `sqlite-consensus` (~1.5x slower) — or fund a week of machine
-  time.
+- **`sqlite-full` has no full-history run.** The production schema was
+  measured only in the 1M-capped run (~1.5x slower than
+  `sqlite-consensus`). For a full-history number, apply that ratio — or
+  fund a week of machine time.
 - **External CPU contention touched parts of the full-history run.** This
   host is a VM; a text-model inference job in another container overlapped
   the tail of `rocks-lean` and part of the SQLite run, and another job
@@ -209,9 +196,11 @@ Read these before quoting the numbers.
   record, and any crash recovers to a clean "as of height H" state (see
   [Target design](target.md)). I didn't measure a strict-durability
   variant; it isn't the design point.
-- **Page-cache effects.** The replayed DBs (3–8 GB) approach the host's
-  15 GB RAM. I planned a memory-capped (2 GB cgroup) rerun of the most
-  interesting pair and didn't do it; on a truly RAM-starved box I'd expect
-  the SQLite numbers to be worse, not better.
+- **Page-cache effects are exercised, not eliminated.** The full-history
+  DBs (54–100 GB) dwarf the host's 15 GB RAM, so these numbers include
+  real cache-miss behavior — the "everything fits in RAM" objection to
+  the earlier 1M-capped run no longer applies. A deliberately RAM-starved
+  (2 GB cgroup) run still hasn't been done; I'd expect it to hurt SQLite
+  more.
 - **Rewind under replay was not exercised** in the timed runs; rollback
   correctness is covered by unit tests only.

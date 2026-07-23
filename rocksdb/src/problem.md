@@ -8,12 +8,13 @@ all four anyway.
 
 ## The store degrades superlinearly
 
-SQLite's per-block cost climbs as the database grows. Replaying real mainnet
-history (details in [Benchmarks](benchmarks.md)), the production schema
-slowed from ~727 blk/s at height 10k to ~8 blk/s near height 1M — 4.3x over
-the measured window, still steepening, and that window is only 17.5% of
-mainnet history. B-tree index maintenance grows with tree depth; I see no
-reason to expect the curve to flatten.
+SQLite's per-block cost climbs as the database grows. Replaying all of
+mainnet history (details in [Benchmarks](benchmarks.md)), SQLite — even
+with the explorer indexes already dropped — slowed from thousands of
+blocks per second in the early chain to ~15 at the tip, and to 1–5 in the
+dust-storm segments. The full replay took 101 hours against RocksDB's 13
+to 15. B-tree index maintenance grows with tree depth; the measured curve
+never flattens.
 
 ## Explorer indexes live in the consensus path
 

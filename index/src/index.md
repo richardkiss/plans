@@ -21,7 +21,7 @@ says what's *actually* done, not what I hoped would be done by now.
 
 | Plan | Status | Summary |
 |------|--------|---------|
-| [Chia coin store: RocksDB migration](rocksdb/index.html) | **in progress** | Move the consensus coin store off SQLite onto RocksDB. Benchmarks show a ~40x engine gap that widens as the DB grows. |
+| [Chia coin store: RocksDB migration](rocksdb/index.html) | **in progress** | Move the consensus coin store off SQLite onto RocksDB. Full-mainnet replay: 101 h on SQLite vs 13 h on RocksDB, worst in dust segments. |
 
 ## Drafts
 
