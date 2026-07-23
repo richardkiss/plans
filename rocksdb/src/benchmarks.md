@@ -166,16 +166,13 @@ other machines should be tagged with their host name.
 
 Read these before quoting the numbers.
 
-- **The host is NVMe-backed, not a spinning disk.** I originally believed
-  this box was HDD-backed (the guest reports the virtual disk as
-  rotational; the backing store is NVMe). NVMe's cheap random reads flatter
-  SQLite, so the gap on a real HDD should be *larger* — but that's
-  extrapolation until a real-HDD run exists. Details:
+- **The host is NVMe-backed, not a spinning disk.** NVMe's cheap random
+  reads flatter SQLite, so the gap on a real HDD should be *larger* — but
+  that's extrapolation until a real-HDD run exists. Details:
   [Benchmark hosts](bench-host.md).
 - **`sqlite-full` has no full-history run.** The production schema was
-  measured only in the 1M-capped run (~1.5x slower than
-  `sqlite-consensus`). For a full-history number, apply that ratio — or
-  fund a week of machine time.
+  measured only in the 1M-capped run, at ~1.5x slower than
+  `sqlite-consensus`. For a full-history estimate, apply that ratio.
 - **External CPU contention touched parts of the full-history run.** This
   host is a VM; a text-model inference job in another container overlapped
   the tail of `rocks-lean` and part of the SQLite run, and another job
@@ -194,13 +191,11 @@ Read these before quoting the numbers.
   design, no-fsync is correct by construction: the peak update rides in the
   same atomic WriteBatch as the coins, so the peak key *is* the commit
   record, and any crash recovers to a clean "as of height H" state (see
-  [Target design](target.md)). I didn't measure a strict-durability
-  variant; it isn't the design point.
+  [Target design](target.md)). No strict-durability variant was measured;
+  it isn't the design point.
 - **Page-cache effects are exercised, not eliminated.** The full-history
   DBs (54–100 GB) dwarf the host's 15 GB RAM, so these numbers include
-  real cache-miss behavior — the "everything fits in RAM" objection to
-  the earlier 1M-capped run no longer applies. A deliberately RAM-starved
-  (2 GB cgroup) run still hasn't been done; I'd expect it to hurt SQLite
-  more.
+  real cache-miss behavior. There is no measurement on a severely
+  RAM-starved box (say, a 2 GB cgroup); expect that to hurt SQLite more.
 - **Rewind under replay was not exercised** in the timed runs; rollback
   correctness is covered by unit tests only.
