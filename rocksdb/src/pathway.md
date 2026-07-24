@@ -63,7 +63,9 @@ Move peak tracking from `BlockStore` into the coin store's atomic unit;
 `_reconsider_peak` becomes one transaction against one store. Block records
 and `in_main_chain` become derivable/repair-at-startup. This fixes the
 transaction-boundary design *while still on SQLite*, so it's testable
-against the existing engine before any RocksDB code exists.
+against the existing engine before any RocksDB code exists. Why this is
+safe — and why nothing else in the node needs a cross-store transaction —
+is the subject of [Atomicity invariants](invariants.md).
 
 *Acceptance:* crash-consistency test at a reorg boundary; peak and coin set
 can never disagree.

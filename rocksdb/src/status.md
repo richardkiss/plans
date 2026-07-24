@@ -2,6 +2,15 @@
 
 Living page. Dated entries, newest first.
 
+## 2026-07-23 — Atomicity invariants published
+
+- New page: [Atomicity invariants](invariants.md) — the audit of every
+  write-transaction site in the node, verified against main at `54201dc53`.
+  Exactly one cross-store write transaction exists (`_reconsider_peak`,
+  plus its simulator twin), and the peak/chain-index migration dissolves
+  it. This is the reference for the atomicity question from #19799/#19949;
+  migration PRs cite it rather than re-arguing in-thread.
+
 ## 2026-07-23 — Multi-block WriteBatch: doesn't pay
 
 - The `SPIKE_BATCH_BLOCKS=100` re-run of both rocks backends finished:
