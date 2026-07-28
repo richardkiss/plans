@@ -2,7 +2,25 @@
 
 Living page. Dated entries, newest first.
 
-## 2026-07-23 — Atomicity invariants published
+## 2026-07-27 — Stage 1 landed; first read-view PRs open
+
+- The [pathway](pathway.md) got rewritten from the original five-step
+  outline into the staged ladder it turned into in practice (S0–S17).
+  Biggest structural change: the peak/chain-index migration happens
+  *before* HF2, on SQLite; only the physical split and the new backends
+  wait for the fork.
+- Stage 1 (hygiene + the tach exception) is done: #21165 (raw `hints` SQL
+  moved into `HintStore`), #21167 (dead `BlockHeightMapProtocol` deleted),
+  #21168 (`CoinStoreProtocol` slimmed 15 → 6 methods), #21169
+  (`BlockStoreProtocol`; `chia.consensus` no longer imports
+  `chia.full_node`) are merged; #21166 (compactification writes behind a
+  `BlockStore` method) is approved and waiting on the merge pipeline.
+- Stage 2 opened as two draft PRs. #21180 adds `snapshot()` to `CoinStore`:
+  a consistent read view — something the node today has in exactly one
+  place, so consistency is being *added*, not preserved. #21179 adds
+  `ChainView`, pinning chain-index reads to one block; weight-proof
+  creation converts to it, closing a latent bug where a reorg during proof
+  creation could silently mix blocks from two chains into one proof.
 
 - New page: [Atomicity invariants](invariants.md) — the audit of every
   write-transaction site in the node, verified against main at `54201dc53`.
