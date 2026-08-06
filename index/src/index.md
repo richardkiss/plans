@@ -25,4 +25,6 @@ says what's *actually* done, not what I hoped would be done by now.
 
 ## Drafts
 
-Nothing here yet.
+| Plan | Status | Summary |
+|------|--------|---------|
+| [Chia mempool: generalized fast forward](gff/index.html) | **draft** | Remove singleton fast-forward from the node; user-space resolvers plus a bounded, relayed annex pool. No fork, all mempool policy. R1 measurements pending. |
