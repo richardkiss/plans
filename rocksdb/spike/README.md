@@ -20,6 +20,10 @@ uvx --from "$SPIKE" spike-extract 1000000   # optional height cap
 
 # replay all four backends against extract.dat.zst in the cwd (hours)
 uvx --from "$SPIKE" spike-replay
+
+# one-pass sqlite → rocks migration (no intermediate extract.dat.zst)
+uvx --from "$SPIKE" spike-migrate 1000000   # optional height cap
+uvx --from "$SPIKE" spike-migrate --dry-run 100000   # merge only, no writes
 ```
 
 `spike-replay` writes throughput CSVs and plots to `plots/`, and a summary
@@ -33,6 +37,14 @@ More replay knobs, all env vars:
   WriteBatch (one commit, one MultiGet; cross-block ephemeral coins skip
   the DB). Undo info stays per-block, so rewind granularity is unchanged.
 - `SPIKE_RESUME=1` — resume a crashed run from the existing DB's peak.
+
+`spike-migrate` knobs:
+
+- `CHIA_MAINNET_DB` — source sqlite (default: `~/.chia/mainnet/db/blockchain_v2_mainnet.sqlite`).
+- `SPIKE_MIGRATE_DB` — rocks output path (default: `migrate.rocks`).
+- `SPIKE_MIGRATE_BACKEND=rocks-lean` — backend selection (default: `rocks`).
+- Resumes from the target DB's peak; walks back to the last `b{height}` undo
+  record if needed, then continues.
 
 Mind the disk budget: the four databases peak at ~8 GB each; they are
 deleted after each backend finishes.
