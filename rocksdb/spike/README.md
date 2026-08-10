@@ -15,7 +15,7 @@ SPIKE="git+https://github.com/richardkiss/plans#subdirectory=rocksdb/spike"
 uvx --from "$SPIKE" spike-test
 
 # extract per-block coin deltas from a synced mainnet DB (~1.5 GB output)
-# reads ~/.chia/mainnet/db/blockchain_v2_mainnet.sqlite (override: CHIA_MAINNET_DB)
+# one-pass (two sorted sqlite cursors); reads ~/.chia/mainnet/db/... (CHIA_MAINNET_DB)
 uvx --from "$SPIKE" spike-extract 1000000   # optional height cap
 
 # replay all four backends against extract.dat.zst in the cwd (hours)
@@ -37,6 +37,13 @@ More replay knobs, all env vars:
   WriteBatch (one commit, one MultiGet; cross-block ephemeral coins skip
   the DB). Undo info stays per-block, so rewind granularity is unchanged.
 - `SPIKE_RESUME=1` — resume a crashed run from the existing DB's peak.
+
+`spike-extract` knobs:
+
+- `CHIA_MAINNET_DB` — source sqlite (default: `~/.chia/mainnet/db/blockchain_v2_mainnet.sqlite`).
+- `SPIKE_EXTRACT_RESUME=1` — resume a partial `extract.dat.zst` from the last
+  block height written (scans the partial file, copies completed blocks, then
+  continues the merge from sqlite).
 
 `spike-migrate` knobs:
 

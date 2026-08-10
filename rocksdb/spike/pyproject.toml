@@ -25,6 +25,7 @@ spike-test = "test_coin_store:main"
 [tool.setuptools]
 py-modules = [
     "extract",
+    "extract_format",
     "coin_store",
     "replay",
     "migrate",
