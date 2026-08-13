@@ -15,9 +15,8 @@ All PR states on this page verified live today.
   consensus-critical one, approved by Arvid —
   [#1438](https://github.com/Chia-Network/chia_rs/pull/1438) (2026-08-03).
 - [#1439](https://github.com/Chia-Network/chia_rs/pull/1439) (serde_2026
-  emission) is restacked on main and green, waiting for a reviewer; its
-  GitHub title/body are stale (drafted replacements exist, not yet
-  applied). [#1491](https://github.com/Chia-Network/chia_rs/pull/1491)
+  emission) is restacked on main and green, waiting for a reviewer.
+  [#1491](https://github.com/Chia-Network/chia_rs/pull/1491)
   (builder-reset follow-up) is green and unreviewed.
   [#1500](https://github.com/Chia-Network/chia_rs/pull/1500) (trusted
   RPC readers) is a green draft carrying the open `Program`/Streamable
