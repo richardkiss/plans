@@ -1,0 +1,69 @@
+# Target design
+
+The post-HF2 world, in one line each:
+
+- **Identity**: a generator is identified by the tree hash of its interned
+  tree, not the hash of its bytes.
+- **Cost**: interned vbytes — `atom_bytes + 2·atoms + 3·pairs` — replacing
+  byte-length cost. Structure, not encoding.
+- **Format**: serde_2026 is the generator serialization, prefix mandatory.
+  Under `INTERNED_GENERATOR`, `run_block_generator2` accepts *only*
+  serde_2026; classic and back-ref blobs fail with `SerializationError`.
+- **Pipeline**: bytes → serde_2026 deserialize → intern → spend list. No
+  ROM, no quote wrapper, no `SIMPLE_GENERATOR`, no `check_generator_quote`.
+  The blob is data taken verbatim, not a program — the "generator" name
+  survives only for wire compatibility. `transactions_generator_ref_list`
+  is dead too; back-refs already broke cross-block compression, and nodes
+  shouldn't need every historical generator forever.
+
+## One activation, not two
+
+`INTERNED_GENERATOR` and serde_2026 activate together at
+`HARD_FORK2_HEIGHT`. They're tightly coupled by design — the new cost
+model is computed over the interned tree that serde_2026 decodes into, and
+the strict format check is the wire enforcement (E4 in
+[Evidence](evidence.md)). There is no separate format-activation flag, and
+none is needed later either: format versioning is baked into the prefix
+itself (the magic spells "2026"), so a future format is a new magic, not a
+new consensus flag mechanism.
+
+This follows the established HF2 pattern: features get their own flags,
+all flags flip at the single `hard_fork2_height`.
+
+## Emission — a ladder of risk
+
+Consumption is consensus; emission is farmer policy, and it gets a
+conservative ladder:
+
+1. `solution_generator_2026()` — one-shot batch function, the simplest
+   fallback path.
+2. `InternedBlockBuilder` with a `serde_2026` constructor flag
+   ([#1436](https://github.com/Chia-Network/chia_rs/pull/1436) +
+   [#1439](https://github.com/Chia-Network/chia_rs/pull/1439)) — the
+   simple synchronous builder, default off; with the flag off its output
+   is byte-identical to today's. This is what ships as the safe default.
+3. An aggressive "anytime" builder (background optimization thread) —
+   parked at `park/block-2026-builder-optimization`, opt-in later, only
+   after it's proven in the field. If everyone ran an unproven aggressive
+   builder and it had a bug, the chain could stall; the conservative one
+   ships first on purpose.
+
+The builder never sees consensus flags — the caller decides based on
+`INTERNED_GENERATOR` activation.
+
+## Framing becomes policy after the fork
+
+Post-HF2 the block header commits to the generator's *tree hash*, so how
+the bytes are framed at rest is relay/storage policy, not consensus — a
+node could strip the 6-byte prefix in its DB and prepend on read, safely,
+because no valid body can start with the magic (E3). That option is
+deliberately kept open but not taken now; on the wire and at the consensus
+boundary the prefix stays mandatory ([Decision log](decisions.md)).
+
+## Design principle for the transition
+
+Every consensus PR in this series minimizes new code paths when
+`INTERNED_GENERATOR` is *not* set — flag-off behavior stays byte-identical
+to deployed nodes. Post-fork semantics were still in motion while these
+PRs landed; a frozen pre-activation path means design shifts can't force
+re-audits of shipped behavior.
