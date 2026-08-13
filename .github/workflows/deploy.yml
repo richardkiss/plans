@@ -34,13 +34,15 @@ jobs:
           mdbook build index
           mdbook build rocksdb
           mdbook build gff
+          mdbook build hf2
 
       - name: Assemble site
         run: |
-          mkdir -p _site/rocksdb _site/gff
+          mkdir -p _site/rocksdb _site/gff _site/hf2
           cp -r index/book/. _site/
           cp -r rocksdb/book/. _site/rocksdb/
           cp -r gff/book/. _site/gff/
+          cp -r hf2/book/. _site/hf2/
 
       - uses: actions/configure-pages@v5
 

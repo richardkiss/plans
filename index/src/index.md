@@ -28,3 +28,4 @@ says what's *actually* done, not what I hoped would be done by now.
 | Plan | Status | Summary |
 |------|--------|---------|
 | [Chia mempool: generalized fast forward](gff/index.html) | **draft** | Remove singleton fast-forward from the node; user-space resolvers plus a bounded, relayed annex pool. No fork, all mempool policy. R1 measurements pending. |
+| [Chia consensus: generator identity (HF2)](hf2/index.html) | **draft** | Generator identity becomes the interned tree hash, cost becomes interned vbytes, serde_2026 is the post-fork format with a mandatory fail-fast prefix. Entrance PRs merged; emission and exit in review. |
