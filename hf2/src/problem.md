@@ -37,9 +37,10 @@ Two things, activating together at `HARD_FORK2_HEIGHT`:
    over structure, not encoding. Interning also dedups shared subtrees,
    which is where the compression headroom lives.
 2. **A new serialization** (`serde_2026`). The post-fork wire format for
-   generator blobs: measured roughly 20% smaller than the classic back-ref
-   format and several times faster to decode (numbers from the clvm_rs
-   work, [clvm_rs #708](https://github.com/Chia-Network/clvm_rs/pull/708)).
+   generator blobs: measured roughly 20% smaller compressed than the
+   classic back-ref format and much faster to serialize; deserialization
+   is comparable to classic parsing (parity to ~4x depending on payload —
+   numbers from [clvm_rs #708](https://github.com/Chia-Network/clvm_rs/pull/708)).
    It starts with a 6-byte magic prefix, `fd ff 32 30 32 36` — `0xfd`,
    `0xff`, then "2026" in ASCII.
 
