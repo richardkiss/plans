@@ -37,19 +37,22 @@ conservative ladder:
 
 1. `solution_generator_2026()` — one-shot batch function, the simplest
    fallback path.
-2. `InternedBlockBuilder` with a `serde_2026` constructor flag
+2. `InternedBlockBuilder`
    ([#1436](https://github.com/Chia-Network/chia_rs/pull/1436) +
    [#1439](https://github.com/Chia-Network/chia_rs/pull/1439)) — the
-   simple synchronous builder, default off; with the flag off its output
-   is byte-identical to today's. This is what ships as the safe default.
+   simple synchronous builder; it always emits serde_2026. It has no
+   emission-format flag on purpose: its interned-vbyte cost model is only
+   correct post-fork, and post-fork the strict rule makes serde_2026 the
+   only valid format — a classic-emission mode would just be a way to
+   build invalid blocks. This is what ships as the safe default.
 3. An aggressive "anytime" builder (background optimization thread) —
    parked at `park/block-2026-builder-optimization`, opt-in later, only
    after it's proven in the field. If everyone ran an unproven aggressive
    builder and it had a bug, the chain could stall; the conservative one
    ships first on purpose.
 
-The builder never sees consensus flags — the caller decides based on
-`INTERNED_GENERATOR` activation.
+The builder never sees consensus flags — the caller picks the classic
+builder or the interned one based on `INTERNED_GENERATOR` activation.
 
 ## Framing becomes policy after the fork
 
