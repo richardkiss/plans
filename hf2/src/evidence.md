@@ -1,9 +1,17 @@
 # Evidence
 
-Three findings, all verified by running code against clvm_rs and chia_rs
-(main, May–July 2026 — serde_2026 as landed in
-[clvm_rs #708](https://github.com/Chia-Network/clvm_rs/pull/708)). They
-settled the prefix-bytes thread on
+Evidence for the claim the whole design leans on: **the fail-fast
+property — old software rejecting the new format immediately instead of
+misreading it — comes from the 6-byte magic prefix, and from nothing
+else.** E1 shows the body alone does not provide it; E2 shows the prefix
+always does; E3 shows the two formats are structurally unconfusable while
+the prefix is present; E4 shows the one place that guarantee is actually
+enforced on the wire.
+
+E1–E3 were verified by running code against clvm_rs and chia_rs (main,
+May–July 2026 — serde_2026 as landed in
+[clvm_rs #708](https://github.com/Chia-Network/clvm_rs/pull/708)); E4 by
+auditing the wire path. Together they settled the prefix-bytes thread on
 [chia_rs #1438](https://github.com/Chia-Network/chia_rs/pull/1438) and
 they shape everything in [Decision log](decisions.md).
 
