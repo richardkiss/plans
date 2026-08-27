@@ -9,6 +9,21 @@ The post-HF2 world, in one line each:
 - **Format**: serde_2026 is the generator serialization, prefix mandatory.
   Under `INTERNED_GENERATOR`, `run_block_generator2` accepts *only*
   serde_2026; classic and back-ref blobs fail with `SerializationError`.
+- **`Program` stays classic-only**. The general-purpose `Program` type
+  (puzzles, solutions, and anywhere else CLVM is passed around) never
+  learns serde_2026 — Richard's ruling. The generator is the one place a
+  block's version is known at deserialization time, so the block version
+  selects the decoder there; `Program::parse` doesn't need to, and
+  shouldn't, guess.
+- **No sniffing, anywhere.** Every call site dispatches on `block.version`
+  or fork height, never on the byte prefix. `Program.from_bytes` rejecting
+  serde_2026 blobs is the direct consequence, not a gap to be closed with a
+  prefix-sniffing fallback. See [Decision log](decisions.md).
+- **`generator_root` post-HF2 is the tree hash of the generator.**
+  Serialization becomes pure transport once the header commits to the tree
+  hash instead of the bytes — the malleability problem this whole plan
+  exists to fix. Pre-HF2 (v0) keeps `std_hash` of the serialized bytes;
+  the two live side by side, dispatched on `block.version`.
 - **Pipeline**: bytes → serde_2026 deserialize → intern → spend list. No
   ROM, no quote wrapper, no `SIMPLE_GENERATOR`, no `check_generator_quote`.
   The blob is data taken verbatim, not a program — the "generator" name
@@ -39,7 +54,7 @@ conservative ladder:
    fallback path.
 2. `InternedBlockBuilder`
    ([#1436](https://github.com/Chia-Network/chia_rs/pull/1436) +
-   [#1439](https://github.com/Chia-Network/chia_rs/pull/1439)) — the
+   [#1511](https://github.com/Chia-Network/chia_rs/pull/1511)) — the
    simple synchronous builder; it always emits serde_2026. It has no
    emission-format flag on purpose: its interned-vbyte cost model is only
    correct post-fork, and post-fork the strict rule makes serde_2026 the
