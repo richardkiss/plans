@@ -74,9 +74,12 @@ varint is the atom-group count, which is rejected when negative. This
 holds for lenient parsing and overlong encodings alike. Sign, not
 magnitude — by construction, no childproofing needed.
 
-This is what makes prefix-sniffing dispatch (`node_from_bytes_auto`)
-sound, and what would make a future store-side strip/prepend provably safe
-([Decision log](decisions.md)).
+Structurally, this is what would make prefix-sniffing dispatch sound if
+anything ever needed it, and what makes a future store-side strip/prepend
+provably safe. In practice nothing does: every real call site knows the
+block version already, and Richard ruled out sniffing anywhere in the
+shipped design — the trial sniffing helper (`node_from_bytes_auto`) was
+built, then deleted before anything shipped ([Decision log](decisions.md)).
 
 ## E4 — the wire audit: strict consensus IS the enforcement
 
