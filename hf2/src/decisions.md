@@ -83,25 +83,89 @@ No PR in this series wires `INTERNED_GENERATOR` into
 surface; the activation is a one-line change at a height Arvid chooses.
 Settled.
 
+## 2026-08-13 — The builder never carries an emission-format flag
+
+`InternedBlockBuilder` always emits serde_2026; there is no
+`serde_2026=True/False` switch on it. Its interned-vbyte cost model is
+only correct post-fork, and post-fork serde_2026 is the only legal
+encoding — a classic-emission mode on this builder would just be a way to
+build invalid blocks. Settled.
+
+## 2026-08-24 — `Program` never learns serde_2026; #1439 replaced by #1511
+
+Reading Arvid's merged work
+([#1501](https://github.com/Chia-Network/chia_rs/pull/1501)/
+[#1502](https://github.com/Chia-Network/chia_rs/pull/1502) in chia_rs,
+[#21249](https://github.com/Chia-Network/chia-blockchain/pull/21249) in
+chia-blockchain) settled the architecture: v1 blocks carry the generator
+as raw bytes (`transactions_generator_buffer`), with the version known
+from the block itself. Under that architecture the only code anywhere
+that wraps generator bytes into a `Program` is chia-blockchain's exit-side
+reader, and only because of a type it could fix directly (the
+`BlockGenerator.program` blocker below) — so `Program`, the
+general-purpose type used for puzzles and solutions everywhere else,
+never needs to carry serde_2026 at all. Ruling: it doesn't, ever. #1439
+(which had widened `Program::parse` to accept serde_2026) is superseded by
+[#1511](https://github.com/Chia-Network/chia_rs/pull/1511), which is
+emission plus explicit-format readers only — `Program` stays
+byte-identical to main. Settled.
+
+## 2026-08-24 — No sniffing, anywhere
+
+Consensus never wants "accept either" — verified empirically, not just
+argued: no consensus call site in the pinned chia_rs wheel calls a
+prefix-sniffing function, and the wiring draft (chia-blockchain,
+`hf2-wiring` branch) confirmed every exit-side call site also has
+`block.version` or a fork-height comparison in hand already, so none of
+them need to guess from the byte prefix either. The one sniffing helper
+that had been built for this purpose, `node_from_bytes_auto` (and its
+tree-hash counterpart `tree_hash_auto`), was deleted in
+[#1511](https://github.com/Chia-Network/chia_rs/pull/1511)'s 2026-08-27
+amendment rather than shipped — replaced by non-sniffing, explicitly-named
+functions (`node_from_bytes_2026_trusted`, `tree_hash_2026`). Settled.
+
+## 2026-08-24 — `generator_root` post-HF2 is the tree hash
+
+Post-HF2 (v1), `generator_root` is the tree hash of the generator, not a
+hash of its bytes — this is the change that makes serialization pure
+transport and kills the malleability [Problem](problem.md) opens with.
+Pre-HF2 (v0) keeps `std_hash` of the serialized bytes; the two are
+dispatched on `block.version`. Note honestly: as of
+[#21249](https://github.com/Chia-Network/chia-blockchain/pull/21249),
+current chia-blockchain main still `std_hash`es v1 buffers — the
+tree-hash change is not yet live anywhere; it's what the still-unwritten
+exit-side wiring PR (replacing #20800) needs to do, and it's exactly what
+the local `hf2-wiring` draft implements (blocked from being tested
+end-to-end by the open question below, and until 2026-08-27 also blocked
+by chia_rs having no Python-visible way to compute a serde_2026 tree hash
+at all — [#1511](https://github.com/Chia-Network/chia_rs/pull/1511) now
+ships `tree_hash_2026` for this).
+
 ## Open questions
 
 Marked open because they are.
 
+- **`BlockGenerator.program: SerializedProgram` cannot hold serde_2026
+  bytes** (chia-blockchain, `generator_types.py`) — confirmed empirically:
+  `Program.from_bytes`/`.from_bytes_unchecked` both reject serde_2026
+  bytes with `unexpected end of buffer`, which crashes mempool's own
+  block builders, `Blockchain.add_block`'s additions/removals path, and
+  (via a swallowed exception) silently rejects every post-HF2
+  transaction block in `multiprocess_validation.py`. Proposed fix: retype
+  the field to raw `bytes` — every chia_rs call downstream is already
+  byte-native, and callers already carry `block.version`. This is a
+  chia-blockchain design decision, Arvid's design area, and **the
+  conversation with him hasn't happened yet.** The only genuinely open
+  thing left in this plan.
 - **Activation height and timing** — Arvid's; nothing on my side blocks
   it once the pathway completes. `HARD_FORK2_HEIGHT` is still a
   placeholder on main.
-- **chia_rs release timing** — needed before #20800 can point at PyPI
-  instead of a git pin. Not mine to cut.
-- **`Program`/Streamable rejects serde_2026 blobs** — found in the
-  [#1500](https://github.com/Chia-Network/chia_rs/pull/1500) audit:
-  `Program::parse` refuses `0xfd`, so Python can't construct a `Program`
-  from a serde_2026 blob, which gates every `Program`-taking helper and
-  presumably `FullBlock` round-tripping. #1439's prefix-aware
-  `Program::parse` is the intended fix — whether that's the right layer
-  **needs Arvid's eyes**.
-- **#20800 post-HF test knob** — how the chia-blockchain test suite opts
-  into post-fork constants; design not settled.
-- **Smaller, from #1500**: unify sniff-vs-flag dispatch across the
-  trusted helpers; whether the wheel helpers should get real size caps
-  instead of `usize::MAX` (input is the node's own validated data, so
-  it's the same trust level as before — but worth a look).
+- **chia_rs release timing** — needed before the exit-side wiring PR can
+  point at PyPI instead of a git pin. Not mine to cut.
+- **#1500's fate** — its trusted-reader changes overlap
+  [#1511](https://github.com/Chia-Network/chia_rs/pull/1511)'s (same
+  functions, sniffing vs. flag-dispatch), but nobody has closed or
+  rebased it yet. Needs a decision, not an assumption.
+- **Smaller, from #1500**: whether the wheel helpers should get real size
+  caps instead of `usize::MAX` (input is the node's own validated data,
+  so it's the same trust level as before — but worth a look).
