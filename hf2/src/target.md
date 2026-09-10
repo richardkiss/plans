@@ -45,6 +45,31 @@ new consensus flag mechanism.
 This follows the established HF2 pattern: features get their own flags,
 all flags flip at the single `hard_fork2_height`.
 
+## Size bound: a function, not a constant
+
+There is no longer a constant for the maximum serialized size of a
+serde_2026 blob. Instead there is a function,
+[`max_canonical_blob_size(max_cost, cost_per_byte)`](https://github.com/Chia-Network/chia_rs/blob/main/crates/chia-consensus/src/serde_2026.rs)
+(landed in [#1437](https://github.com/Chia-Network/chia_rs/pull/1437)):
+for a given cost limit it returns an N such that every CLVM tree costing
+at most the limit serializes in 2026 format in at most N bytes. The bound
+is tight enough to use wherever the constant was used — `run_block_generator2`
+rejects any blob above it before parsing. At mainnet constants it is
+916,677 bytes.
+
+Why it works: consensus charges `vbytes · cost_per_byte`, so any
+cost-valid tree has `vbytes ≤ max_cost / cost_per_byte`, and the canonical
+serde_2026 body is at most `vbytes + 5` bytes (the atom table costs at most
+2 bytes of overhead per atom, the instruction stream at most 2 bytes per
+push and 1 per cons, and the headers fit in the slack). The derivation and
+the tightness argument are in the function's doc comment; a fuzz target
+(`serde-2026-size-bound`) checks it empirically.
+
+The max atom size constant is gone too. An atom of length L appears
+literally in the serialization, so the blob has at least L bytes — N
+already bounds it. `node_from_bytes_2026` passes the same value as both the
+blob cap and the per-atom cap.
+
 ## Emission — a ladder of risk
 
 Consumption is consensus; emission is farmer policy, and it gets a

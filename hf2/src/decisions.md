@@ -83,6 +83,16 @@ No PR in this series wires `INTERNED_GENERATOR` into
 surface; the activation is a one-line change at a height Arvid chooses.
 Settled.
 
+## 2026-07-16 — The blob size cap is derived from cost constants
+
+No `MAX_GENERATOR_SIZE`-style constant and no separate max-atom-length
+constant for serde_2026. `max_canonical_blob_size(max_cost, cost_per_byte)`
+computes the largest wire size any cost-valid tree can have, and the same
+value serves as the per-atom cap (an atom of length L forces a blob of at
+least L bytes). Landed in
+[#1437](https://github.com/Chia-Network/chia_rs/pull/1437). See
+[Target design](target.md#size-bound-a-function-not-a-constant). Settled.
+
 ## 2026-08-13 — The builder never carries an emission-format flag
 
 `InternedBlockBuilder` always emits serde_2026; there is no
