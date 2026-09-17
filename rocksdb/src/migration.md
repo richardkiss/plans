@@ -125,11 +125,68 @@ Two more things worth naming:
   happens ([Decision log](decisions.md)'s reorg archeology: 145 orphans
   in all of mainnet history, essentially all single-block).
 
-Cutover stays a restart-boundary event either way, not a live hot-swap —
-that's the [db_v3 lesson](decisions.md): splitting the atomic unit across
-two stores, even briefly, is the bug class that killed the earlier
-attempt. `chia db migrate --cutover` would be the explicit foreground
-alternative, same escape hatch as S10's.
+### Sharding the drain instead of building alongside
+
+The sketch above still keeps a full SQLite copy around for the whole
+build. Could it drain — delete rows out of SQLite as they're copied over —
+and skip the 2× disk entirely? Two issues.
+
+**Routing.** Coin lookups key by `coin_id` / `puzzle_hash`, not height, so
+draining can't be routed by height the way the build above is. Writes
+can't split by "which store holds this coin" either: a single block both
+creates and spends coins, and if creates went to RocksDB while spends of
+undrained coins went to SQLite, one block's write would need to touch both
+stores atomically — recreating the cross-store transaction
+[Atomicity invariants](invariants.md) just eliminated. So the only
+consistent shape is an overlay: from the *first* moment of migration,
+every write goes to RocksDB only, and SQLite becomes a read-only body
+being drained in the background, never written again. That moves the
+write cutover to the *start*, closer to S9's dual-write shape than to
+"build alongside, then flip." Reads check RocksDB first, fall back to
+SQLite for anything not yet drained. Reorgs into pre-cutover heights need
+the *old* rollback path (SQLite's `coin_record` scan — RocksDB has no
+undo log for blocks it never processed), so cutover should happen at a
+height already confirmed enough that reaching back past it is
+astronomically unlikely, not just eventually so.
+
+**SQLite doesn't give space back.** No `auto_vacuum` is set anywhere in
+the schema, so deletes free pages to an internal freelist but the file
+never shrinks without `VACUUM` — and `VACUUM` itself needs scratch space
+≈ the *current live* content, while the old, still-full-size file exists
+until the swap. Work the math with `ρ` = destination/source size for the
+same data (not 1): draining fully with no `VACUUM` at all, then deleting
+the empty file, peaks at `1+ρ`. One `VACUUM` at the right point (roughly
+where the not-yet-drained SQLite fraction and the drain's own progress
+balance out) does better. Plug in real numbers instead of assuming equal
+sizes: [Benchmarks](benchmarks.md)'s full-mainnet run measured
+`sqlite-consensus` at 99.5 GB against `rocks` at 68.3 GB and `rocks-lean`
+at 54.2 GB for the *same* history — `ρ ≈ 0.69` / `0.55`. So "2×" was
+already an overestimate: no `VACUUM` at all peaks around `1.5-1.7×`, and
+one well-timed `VACUUM` brings that down to roughly `1.2-1.3×`. But
+`VACUUM` is file-granular, not table-granular — `coin_record` shares a
+file with the archive (`full_blocks`, which stays SQLite forever, per
+S17), so a `VACUUM` rewrites that too, every time, scaling with the whole
+database's size (215 GB and growing) rather than just `coin_record`'s
+share — closer in cost to `chia db upgrade`'s own offline rewrite than to
+a quick operation. `VACUUM INTO` bounds the exclusive-lock window to the
+final swap instead of the whole rebuild, if a mid-drain `VACUUM` is used
+at all. Recommendation: **skip it unless disk is genuinely tight** — the
+`1.5-1.7×` peak self-resolves the moment the drain finishes and the empty
+file gets deleted, no exclusive-lock maintenance window required. Make a
+mid-drain `VACUUM` an operator flag, not part of the default path. On two
+volumes, none of this applies — put the destination on the other one.
+
+### Cutover
+
+The write-target switch to RocksDB is the one atomic, restart-boundary
+event, and it happens at the *start* of the overlay design above, not the
+end — a live hot-swap partway through would reintroduce the
+[db_v3 lesson](decisions.md)'s bug class (splitting the atomic unit across
+two stores, even briefly). There's no second cutover needed at
+completion: reads already prefer RocksDB throughout, and finishing the
+drain just deletes an empty SQLite remnant. `chia db migrate --cutover`
+still names the foreground escape hatch — "run every phase now,
+unthrottled" — matching S10's `chia db migrate`.
 
 ## Kind, by step
 
