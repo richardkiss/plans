@@ -117,24 +117,35 @@ structure is still there and still correct.
 
 ## Wait point — HF2 lands (external dependency)
 
-HF2 removes generator backrefs, which takes generators out of the consensus
-path entirely. Pre-HF2, the consensus surface has to carry
-`get_generator` / `get_generators_at` — machinery HF2 deletes — and I don't
-want to build backend infrastructure around code with a known expiry date.
-HF2 is active priority 1 upstream, so this is waiting on a moving train,
-not a parked dependency.
+HF2 stops *new* blocks from using generator backrefs; it doesn't remove them.
+Every block below the fork height that already has a
+`transactions_generator_ref_list` still needs `get_generator` /
+`get_generators_at` on sync-from-genesis, forever — that machinery doesn't
+expire. What HF2 buys is narrower but still real: since a ref can only point
+below the referring block, and no block at or above HF2_HEIGHT has one,
+every ref'd height is fixed once the peak passes HF2_HEIGHT +
+`MAX_REORG_DEPTH` — no reorg can reach it. At that point the lookup is a
+plain read against frozen history, not a live member of the consensus
+store's atomic unit. So I don't want to build backend infrastructure around
+the *consistency requirement*, which does expire — the lookup itself moves
+to the archive instead of disappearing. HF2 is active priority 1 upstream,
+so this is waiting on a moving train, not a parked dependency.
 
 ## Stage 4 (post-HF2) — physical split and backends
 
-- **S14.** Drop `get_generator` / `get_generators_at` from the consensus
-  surface once inter-block references are disallowed.
+- **S14.** `get_generator` / `get_generators_at` leave the consensus store's
+  write scope; they become archive-side reads over frozen pre-HF2 history.
+  The fork-chain branch of the lookup (needed today for refs into a
+  not-yet-main-chain block) is deleted once peak ≥ HF2_HEIGHT +
+  `MAX_REORG_DEPTH` makes it unreachable.
 - **S15.** The RocksDB backend, config-selected; SQLite stays the default
   initially. Ships in the same phase, not after: an fsck/rollback tool
   (data-integrity tooling arrives *with* the backend), a metadata key
   family (schema version, network id, lean/full flag, earliest undo
   height), the slimmed coin record, per-height chain-index keys. The
   migration tool is a one-pass read of a single SQLite snapshot as two
-  height-sorted streams.
+  height-sorted streams. The archive needs the chain index (the pre-HF2
+  slice suffices) to resolve S14's historical generator lookups by height.
 - **S16.** Lean mode — delete spent coins, keep full records in the undo
   log — plus a bounded undo window GC'd by a compaction filter. Needs the
   singleton fast-forward question ([Target design](target.md)) answered

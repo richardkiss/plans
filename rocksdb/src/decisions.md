@@ -81,3 +81,24 @@ Decision: keep the timestamp field (8 of 89 bytes per record) for now. The
 clean future fix is a separate append-only `height -> timestamp` map (~12 B
 per transaction block, ~100 MB for all of mainnet, never needs atomicity).
 A post-migration option, not on the critical path.
+
+## 2026-09-17 — Generator lookup survives HF2; it moves, doesn't die
+
+Earlier pages said HF2 removes generators from the consensus path. Wrong:
+HF2 only stops *new* blocks from using backrefs (`validate_tx_generator`
+rejects v0 blocks at/above the fork height and v1 below it); every existing
+block below the fork height keeps its `transactions_generator_ref_list`
+forever, so `get_generator` / `get_generators_at` never stop being called.
+
+What actually changes: a ref can only point below the referring block, and
+no block at or above HF2_HEIGHT has one, so every ref'd height is fixed once
+the peak passes HF2_HEIGHT + `MAX_REORG_DEPTH` — no reorg can reach it. Past
+that point the lookup is reorg-immune, so it doesn't need to live inside the
+consensus store's atomic write scope. It moves to the archive as a plain
+height-keyed read instead.
+
+Decision: the API doesn't get deleted at S14, it moves — off the consensus
+store, onto the archive, with the fork-chain branch of the lookup dropped
+once the reorg-immunity bound holds. No `ChainView`/pin form needed for it;
+a constant "main chain, frozen below HF2" context is all post-HF2 callers
+ever see.

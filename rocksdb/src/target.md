@@ -48,9 +48,14 @@ is one WriteBatch, not one batch per block walked.
 
 ## Minimal post-HF2 API
 
-After hard fork 2, generator backrefs to prior blocks are gone, generators
-leave the consensus path, and the atomic unit shrinks to coin set + peak.
-The store surface becomes:
+After hard fork 2, new blocks stop using generator backrefs, and the
+consensus store's atomic unit shrinks to coin set + peak. Historical
+generator lookups don't go away — pre-HF2 blocks keep referencing earlier
+generators forever — but once the peak is past HF2_HEIGHT +
+`MAX_REORG_DEPTH`, every ref'd height is reorg-immune, so the lookup no
+longer needs to live inside the consensus store's write scope. It moves to
+the archive as a plain height-keyed read. The consensus store surface
+becomes:
 
 - `process_spends(new_coins, spent_coins, block_index, block_hash,
   timestamp)` — atomically create additions, delete removals, write the undo
@@ -65,6 +70,13 @@ The store surface becomes:
 
 The benchmark implemented all four backends against exactly this surface,
 so I have some evidence the interface is sufficient.
+
+`get_generator_at(height)` lives on the archive, not here — a frozen-history
+read keyed by height, no snapshot or view needed once it's reorg-immune. It
+can be that simple only because it's off the consensus store's write path;
+before HF2_HEIGHT + `MAX_REORG_DEPTH` catches up to a given ref, the same
+lookup still needs the fork-chain fallback S14 describes on the
+[pathway](pathway.md) page.
 
 ## Explorer queries move out
 
