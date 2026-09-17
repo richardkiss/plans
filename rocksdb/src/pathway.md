@@ -57,7 +57,7 @@ the peer/RPC handlers cope with reorgs mid-read by hand (see
 [invariants](invariants.md)). Consistent reads are being *added*, not
 preserved.
 
-- **S6 — #21180 (draft).** `snapshot()` on `CoinStore`: an async context
+- **S6 — #21180 (merged 2026-09-16).** `snapshot()` on `CoinStore`: an async context
   manager yielding a consistent view — peak plus batch coin reads that are
   guaranteed to agree. SQLite implements it as a read transaction; RocksDB
   will use a Snapshot; tests get a frozen dict.

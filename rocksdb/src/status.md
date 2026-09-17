@@ -2,6 +2,30 @@
 
 Living page. Dated entries, newest first.
 
+## 2026-09-16 — Renewed priority; Stage 2's first PR lands; two old stale PRs closed
+
+- Upstream interest picked back up after a summer of HF2 taking priority;
+  keeping at least one PR in flight from here.
+- **#21180 (S6, `snapshot()` on CoinStore) merged** — the first Stage-2 PR
+  to land on main, about a day after undrafting. #21179 (S7, `ChainView`)
+  is still draft: everything is green except one real Coverage gap in
+  `weight_proof.py`, tracing to a guard (`ses_height > view.peak_height`)
+  that's now unreachable since the surrounding loop already filters
+  heights — pending a delete-vs-`pragma` call before it can undraft.
+- Two PRs that predate this project, [#20566](https://github.com/Chia-Network/chia-blockchain/pull/20566)
+  (the earlier monolithic ConsensusStore refactor) and
+  [#20443](https://github.com/Chia-Network/chia-blockchain/pull/20443)
+  (a `rocks_pyo3`-based db_v3 placeholder), were closed as superseded by
+  this pathway — the 2026-07-15 entry below said they were "meant to be
+  superseded"; now they are.
+- Stage 3's first rung, S9 (the `chain_index` dual-write table), has been
+  implemented and tested against current main but isn't pushed or opened
+  as a PR yet.
+- The WPv2 MMR manager (`BlockchainMMRManager`, a second in-RAM
+  implicit-peak structure alongside the height map, dormant until HF2
+  activates) needs the same bounded/persisted treatment S13 gives the
+  height map before HF2 lands. Its author has been asked; no response yet.
+
 ## 2026-07-27 — Stage 1 landed; first read-view PRs open
 
 - The [pathway](pathway.md) got rewritten from the original five-step
