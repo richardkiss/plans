@@ -7,7 +7,7 @@ Living page. Dated entries, newest first.
 - Upstream interest picked back up after a summer of HF2 taking priority;
   keeping at least one PR in flight from here.
 - **#21180 (S6, `snapshot()` on CoinStore) merged** — the first Stage-2 PR
-  to land on main, about a day after undrafting. #21179 (S7, `ChainView`)
+  to land on main, within the hour of undrafting. #21179 (S7, `ChainView`)
   is still draft: everything is green except one real Coverage gap in
   `weight_proof.py`, tracing to a guard (`ses_height > view.peak_height`)
   that's now unreachable since the surrounding loop already filters

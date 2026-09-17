@@ -126,9 +126,10 @@ below the referring block, and no block at or above HF2_HEIGHT has one,
 every ref'd height is fixed once the peak passes HF2_HEIGHT +
 `MAX_REORG_DEPTH` — no reorg can reach it. At that point the lookup is a
 plain read against frozen history, not a live member of the consensus
-store's atomic unit. So I don't want to build backend infrastructure around
-the *consistency requirement*, which does expire — the lookup itself moves
-to the archive instead of disappearing. HF2 is active priority 1 upstream,
+store's atomic unit. What I don't want to build backend infrastructure
+around is that consistency requirement, which does expire — the lookup
+itself moves to the archive instead of disappearing. HF2 is active
+priority 1 upstream,
 so this is waiting on a moving train, not a parked dependency.
 
 ## Stage 4 (post-HF2) — physical split and backends
