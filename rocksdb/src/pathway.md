@@ -83,7 +83,10 @@ The heart of the migration, still entirely on SQLite: the
 transaction-boundary fix is testable against the existing engine before any
 RocksDB code exists. Each rung keeps the old and new structures consistent
 in the *same* transaction, so every intermediate commit is a working node,
-and the old structure stays maintained until a later rung retires it.
+and the old structure stays maintained until a later rung retires it. S10
+is the first rung that needs to run lazily against an already-populated
+database rather than inline in a transaction — see
+[Migrations](migration.md) for the general framework it establishes.
 
 - **S9.** A new `height → header_hash` chain-index table, written inside
   the existing `add_block` transaction. No readers yet; consistent by
@@ -147,6 +150,9 @@ so this is waiting on a moving train, not a parked dependency.
   migration tool is a one-pass read of a single SQLite snapshot as two
   height-sorted streams. The archive needs the chain index (the pre-HF2
   slice suffices) to resolve S14's historical generator lookups by height.
+  Whether the build itself can run in the background instead of offline,
+  with a restart-boundary cutover: [Migrations](migration.md) works
+  through it (yes, with conditions).
 - **S16.** Lean mode — delete spent coins, keep full records in the undo
   log — plus a bounded undo window GC'd by a compaction filter. Needs the
   singleton fast-forward question ([Target design](target.md)) answered

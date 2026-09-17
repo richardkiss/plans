@@ -5,6 +5,7 @@
   - [Benchmark hosts](bench-host.md)
 - [Target design](target.md)
 - [Atomicity invariants](invariants.md)
+- [Migrations](migration.md)
 - [Pathway](pathway.md)
 - [Decision log](decisions.md)
 - [Status](status.md)
