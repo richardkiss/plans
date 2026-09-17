@@ -85,39 +85,51 @@ conversion from the SQLite snapshot to RocksDB
 ([Target design](target.md), [Benchmarks](benchmarks.md) for the replay
 timings this is compared against — half a day even on the fast engine).
 Worth asking whether it could run in the background instead, the way S10
-does. Sketch: snapshot the SQLite database at the current peak, bulk-build
-the RocksDB store from it in the background, catch up whatever landed
-since the snapshot directly from `coin_record` (no generator
-re-execution — the same linear-scan-by-height trick the benchmark
-extraction already uses), and finish at the next restart once the
-remaining delta is small.
+does. Sketch: bulk-build the RocksDB store from SQLite in the background,
+catch up whatever landed during the build directly from `coin_record` (no
+generator re-execution — the same linear-scan-by-height trick the
+benchmark extraction already uses), and finish at the next restart once
+the remaining delta is small. Verdict: **yes, with fixes.**
 
-Three things the sketch glosses over:
+**Don't pin one read snapshot for the whole build.** A single, hours-long
+snapshot pins SQLite's WAL from checkpointing for its whole duration and
+ties up one of a small pool of read connections — real cost on the
+small-disk, weak-hardware boxes this migration exists to help. Instead,
+split `[0, peak]` into phases (a hundred-odd height ranges) and give each
+its own short-lived snapshot: stream both height-sorted queries the tool
+already needs (creations by `confirmed_index`, removals by `spent_index`)
+restricted to that phase's range, write the batch, record the phase index
+as the resume point, close the snapshot. This isn't new machinery — the
+two streams already have to be consumed in height-grouped chunks to
+assemble one undo record per height in O(1) memory, so phasing just
+checkpoints boundaries the tool was going to pass through anyway. It pays
+for itself three ways: resumability becomes the phase index, exactly
+S10's watermark shape one level up; a reorg only invalidates phases whose
+range reaches above the fork height, not the whole build; and the final
+catch-up delta shrinks to a clean rule — rows with `spent_index` past the
+*first* phase's snapshot height, or `confirmed_index` past the *last*
+phase's — bounded by spends during the build's wall-clock duration, not
+by the size of the coin set.
 
-- A single, hours-long read snapshot pins SQLite's WAL from checkpointing
-  for its whole duration, and ties up one of a small pool of read
-  connections — real cost on the small-disk, weak-hardware boxes this
-  whole migration exists to help. Fix: re-snapshot per chunk instead of
-  holding one giant transaction open, the same way S10 commits per batch
-  instead of one pass.
+Two more things worth naming:
+
 - The delta needs block hash and timestamp per height too, not just
   `coin_record` — a second, still-cheap table join, not a hole in the
   no-generator-execution claim, just an incomplete accounting of which
   tables are involved.
 - "Bounded by `MAX_REORG_DEPTH`" isn't true yet — that constant doesn't
   exist as an enforced limit in the node today ([Decision log](decisions.md)
-  has it as a still-pending lean-mode parameter). A reorg past the
-  snapshot point is rare, not bounded; the tool needs to handle a
-  from-scratch restart as a real case. A reorg that stays within the
-  delta already applied doesn't need that, though — the target design's
-  own rewind method handles it same as any other rollback.
+  has it as a still-pending lean-mode parameter). A reorg past every
+  phase built so far is rare, not bounded; the tool needs to handle a
+  from-scratch restart as a real case, even if in practice it never
+  happens ([Decision log](decisions.md)'s reorg archeology: 145 orphans
+  in all of mainnet history, essentially all single-block).
 
 Cutover stays a restart-boundary event either way, not a live hot-swap —
 that's the [db_v3 lesson](decisions.md): splitting the atomic unit across
 two stores, even briefly, is the bug class that killed the earlier
-attempt. Verdict: yes, with those three fixes folded in. `chia db migrate
---cutover` would be the explicit foreground alternative, same escape
-hatch as S10's.
+attempt. `chia db migrate --cutover` would be the explicit foreground
+alternative, same escape hatch as S10's.
 
 ## Kind, by step
 
