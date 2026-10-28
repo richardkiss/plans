@@ -55,15 +55,21 @@ for a given cost limit it returns an N such that every CLVM tree costing
 at most the limit serializes in 2026 format in at most N bytes. The bound
 is tight enough to use wherever the constant was used — `run_block_generator2`
 rejects any blob above it before parsing. At mainnet constants it is
-916,677 bytes.
+1,222,236 bytes.
 
 Why it works: consensus charges `vbytes · cost_per_byte`, so any
-cost-valid tree has `vbytes ≤ max_cost / cost_per_byte`, and the canonical
-serde_2026 body is at most `vbytes + 5` bytes (the atom table costs at most
-2 bytes of overhead per atom, the instruction stream at most 2 bytes per
-push and 1 per cons, and the headers fit in the slack). The derivation and
-the tightness argument are in the function's doc comment; a fuzz target
-(`serde-2026-size-bound`) checks it empirically.
+cost-valid tree has `vbytes ≤ max_cost / cost_per_byte`. The level-0
+encoding of a tree with `vbytes = v` is at most `⌊4v/3⌋ + 15` bytes, for
+`v ≤ 2^20 + 1` (which covers mainnet). The 4/3 is there because once a
+tree has more than 8190 nodes, a back-reference index takes a 3-byte
+varint, but a pair only costs 3 vbytes, so a long chain of pairs can
+encode to almost `4v/3` bytes. A chain over nil of 8193 to 349,525 pairs
+comes within 8264 bytes of the bound. The full proof is in the function's
+doc comment, and a fuzz target (`serde-2026-dag-cap`) checks it.
+
+An earlier version of this page said the bound was `vbytes + 5` (and the
+code had `vbytes + 11`, 916,677 bytes at mainnet). That was wrong: it
+assumed every push fits in 2 bytes. The fix is in chia_rs 0.52.2.
 
 The max atom size constant is gone too. An atom of length L appears
 literally in the serialization, so the blob has at least L bytes — N
