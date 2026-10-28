@@ -69,7 +69,7 @@ doc comment, and a fuzz target (`serde-2026-dag-cap`) checks it.
 
 An earlier version of this page said the bound was `vbytes + 5` (and the
 code had `vbytes + 11`, 916,677 bytes at mainnet). That was wrong: it
-assumed every push fits in 2 bytes. The fix is in chia_rs 0.52.2.
+assumed every push fits in 2 bytes. The fix is coming in chia_rs 0.52.2.
 
 The max atom size constant is gone too. An atom of length L appears
 literally in the serialization, so the blob has at least L bytes — N
