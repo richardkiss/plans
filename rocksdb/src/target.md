@@ -1,108 +1,147 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Target design
 
-The production target is the `rocks-lean` variant from the benchmark: a
-RocksDB-backed consensus coin store that keeps only the UTXO set live, with
-everything needed for reorgs in a per-block undo log, and one atomic write
-per block.
+*(Revised 2026-11-03 after an independent review. The earlier version said
+the four-method spike API was enough. It isn't: validation of competing
+forks, whole-reorg atomicity and archive recovery were all missing. The
+[decision log](decisions.md) has the entry.)*
 
-## Store shape
+The production target is a RocksDB-backed consensus store: the coin set, a
+per-block undo log, the chain index and the peak, all advanced by one atomic
+write per chain transition. Whether it keeps spent coins (`rocks`) or
+deletes them (`rocks-lean`) is a later step, gated on fork validation, below.
 
-Spent coins are deleted, not flagged. When a coin is spent, its key is
-removed from the live coin keyspace; the full spent `CoinRecord` goes into
-that block's undo record, so a rewind can resurrect it exactly. The live
-keyspace is the UTXO set plus a recent undo window — smaller working set,
-better bloom filters and cache behavior, which is what serves the
-spinning-disk goal. (Why deleting is safe on real mainnet history: see the
-reorg archeology in the [decision log](decisions.md).)
+## What the consensus store holds
 
-The undo log: `b<height>` maps to a block record with the block hash,
-timestamp, created coins, and the *full records* of spent coins. Undo
-records double as the source for `get_coins_added/removed_at_height` and can
-be pruned beyond reorg depth.
+- **Coins** keyed by coin ID.
+- **Undo records**: `b<height>` → block hash, timestamp, created coin IDs,
+  and the *full records* of the coins that block spent. A rewind resurrects
+  coins from these, and they double as the source for
+  `get_coins_added/removed_at_height`.
+- **Chain index**: one key per height → header hash, for every main-chain
+  height, transaction block or not. This is the only durable answer to
+  "which block is at height N". Today that answer is stored three times:
+  `in_main_chain` flags on every `full_blocks` row, BlockHeightMap's
+  `height-to-hash` file, and the RAM copy loaded from it. The flags are the
+  authority; the file is a lazily flushed cache, checked against the flags at
+  startup. The chain index replaces the flags and the file. RAM keeps a cache
+  of it.
+- **Peak**: `p` → `(height, header_hash)`, the commit record for the whole
+  store.
+- **Metadata**: schema version, network id, lean/full flag, earliest
+  retained undo height.
 
-Peak lives in the same store: `p -> (height, header_hash)`.
+Sub-epoch summaries are sparse and come from block records. They stay
+available through the archive by hash, or through a small sparse index
+written in the same transition. They aren't a second height → hash table.
 
-## One atomic WriteBatch per block
+## One atomic transition, not one write per block
 
-Coins (creates + deletes), the block's undo record, and the peak update go
-in *one* RocksDB WriteBatch. This is the load-bearing property: a crash at
-any point leaves the store at a consistent block boundary.
+Today one SQLite transaction covers a whole reorg: the block blob insert,
+the coin rewind, every replacement block's coin changes (blocks without
+transactions skip the coin call entirely), the `in_main_chain` updates and
+the peak (`blockchain.py:442-447`, `:539`, `:570-624`). The target keeps
+that unit. It doesn't split it per block:
 
-It also settles durability: the peak key doubles as the commit record, so
-there's no per-block fsync. A process crash loses nothing (the WAL is in
-the page cache); power loss loses an unsynced WAL tail, but recovery
-replays a clean prefix — the store comes back "exactly as of height H" and
-the missing blocks are re-fetched from the network. Blockchain state is
-re-derivable, which is the ideal case for relaxed durability. Hygiene
-still applies: keep the WAL enabled, flush it on clean shutdown, and
-optionally sync every N blocks to bound worst-case re-sync.
+- `apply_transition(fork_height, blocks)`: rewind to `fork_height`, then
+  apply each block in `blocks` in order. This covers coins, undo record,
+  chain-index entry (for every height, including blocks without
+  transactions) and final peak, all in **one** WriteBatch.
+- Reads inside the transition see its own earlier writes. A coin created in
+  block 101 of the replacement branch and spent in 102 has to be found, and
+  so does a coin the rewind just resurrected. RocksDB's plain `get` doesn't
+  see an unwritten WriteBatch, so the backend needs an indexed batch or an
+  in-memory overlay. SQLite gets this for free today because
+  `reader_no_transaction()` routes the writer task's reads to the write
+  connection (`db_wrapper.py:482-493`).
+- A failed or cancelled transition leaves nothing behind.
 
-I learned this the hard way. The earlier db_v3 experiment put coins in
-RocksDB while block records and peak stayed in SQLite, and a crash mid-reorg
-could corrupt state across the two databases. No design that splits the
-atomic unit across stores — see the [decision log](decisions.md).
+Durability is unchanged from the spike's posture: the peak key is the commit
+record, so there's no per-block fsync. Power loss drops an unsynced WAL tail
+and the store comes back exactly as of some height H. Keep the WAL on, flush
+it on clean shutdown, and optionally sync every N blocks.
 
-Rewinds follow the same discipline: the entire rewind (resurrect spent
-coins, delete created coins, drop undo records above the target, move peak)
-is one WriteBatch, not one batch per block walked.
+## Fork validation needs historical coin state
 
-## Minimal post-HF2 API
+This is the requirement the old target missed. Body validation of a block
+on a competing fork runs *before* any reorg (`blockchain.py:400-447`). It
+looks coins up in the current store and accepts a coin that the main chain
+spent after the fork point (`block_body_validation.py:486-525`). Example:
+coin C is created at 90, the chains fork at 100, the main chain spends C at
+103, and the fork's block 101 also spends C. That spend is valid on the
+fork. With spent coins deleted, the lookup finds nothing, C isn't in the
+fork's own additions, and the block is rejected with `UNKNOWN_UNSPENT`.
 
-After hard fork 2, new blocks stop using generator backrefs, and the
-consensus store's atomic unit shrinks to coin set + peak. Historical
-generator lookups don't go away — pre-HF2 blocks keep referencing earlier
-generators forever — but once the peak is past HF2_HEIGHT +
-`MAX_REORG_DEPTH`, every ref'd height is reorg-immune, so the lookup no
-longer needs to live inside the consensus store's write scope. It moves to
-the archive as a plain height-keyed read. The consensus store surface
-becomes:
+So the store needs a **fork-relative read**: coin state as of the fork
+point, plus the fork's own overlay (which `ForkInfo` already carries).
+With full spent records in the undo log, this can be built cheaply. The
+coins the main chain spent above the fork are exactly the removals in
+`b<fork+1> … b<peak>`. That makes "undo records hold full coin records" a
+hard format requirement, not an optimization.
 
-- `process_spends(new_coins, spent_coins, block_index, block_hash,
-  timestamp)` — atomically create additions, delete removals, write the undo
-  record, update peak. Returns the spent `CoinRecord`s and raises on
-  missing/already-spent (it has to read them for the undo log anyway;
-  merging read and write gives storage-level double-spend detection for
-  free).
-- `rewind_to_block_number(n)` — atomically undo everything above height *n*.
-- `get_coin_records(coin_ids)` — batched reads (multi-get), via a snapshot
-  for consistent views (mempool, pre-commit validation).
-- `peak()` — current `(height, header_hash)`.
+Until the fork-relative read exists and is tested (competing spends,
+creations on either branch, ephemeral coins), the backend keeps spent
+coins. Lean mode waits.
 
-The benchmark implemented all four backends against exactly this surface,
-so I have some evidence the interface is sufficient.
+## The archive and recovery
 
-`get_generator_at(height)` lives on the archive, not here — a frozen-history
-read keyed by height, no snapshot or view needed once it's reorg-immune. It
-can be that simple only because it's off the consensus store's write path;
-before HF2_HEIGHT + `MAX_REORG_DEPTH` catches up to a given ref, the same
-lookup still needs the fork-chain fallback S14 describes on the
-[pathway](pathway.md) page.
+Full block blobs stay in SQLite, addressed by header hash. Consensus and
+archive are now two databases, and application write order across two
+independently buffered databases is not durable order. Power loss can
+leave a durable peak whose block blob was lost. Pick one, and test it:
+
+- publish the archive write durably (synced) before the consensus commit, or
+- on startup, check that the blob for every height above the last synced
+  point exists, and rewind the consensus store until it does.
+
+Today's startup needs the peak's block record (`blockchain.py:174-196`), and
+`add_block` returns `ALREADY_HAVE_BLOCK` for a record already present
+(`:382-391`). So "re-fetch it from the network" is not automatic recovery.
+It needs code.
+
+## Historical generator lookup stays branch-aware
+
+HF2 stops new blocks from using generator refs. Old blocks keep theirs
+forever, and syncing from genesis or validating a historical fork still
+resolves them. A ref resolves against *that block's* chain, not the node's
+current peak. The current fork-aware path (`blockchain.py:1077-1106`) stays.
+The archive serves it as: resolve height → hash against the chain in
+question, then fetch the immutable blob by hash. That separation doesn't
+need to wait for HF2.
+
+`MAX_REORG_DEPTH` doesn't exist in the code. An undo-retention window is a
+storage policy, not a finality rule. Before any undo is pruned, a reorg
+deeper than the window needs defined behavior (rebuild or resync). Silently
+rejecting a valid heavier chain is a consensus change.
 
 ## Explorer queries move out
 
-Puzzle-hash queries, coin states, parent lookups, hints — everything that
-serves RPCs and the wallet protocol — moves to a separate ExplorerStore,
-maintained outside the consensus path (and optional for a lean validator).
-The consensus store answers only by coin ID, height, and peak.
+Puzzle-hash queries, coin states, parent lookups, hints: everything that
+serves RPCs and the wallet protocol moves to a separate ExplorerStore,
+maintained outside the consensus path. It publishes its own peak, so
+consumers can see how far behind it is, and it can be rebuilt from the
+archive. It must exist *before* lean mode removes spent history from the
+default node, along with a home for singleton lineage (today's query joins
+the spent parent, `coin_store.py:656-679`).
 
 ## Binding: rocksdict
 
-The Python binding is [rocksdict](https://pypi.org/project/rocksdict/)
-(PyPI, MIT, production/stable): it ships Snapshot, ColumnFamily, WriteBatch,
-ReadOptions, and prebuilt wheels for Linux/macOS/Windows. Why not revive my
-own pyo3 binding: see the [decision log](decisions.md).
+[rocksdict](https://pypi.org/project/rocksdict/) (PyPI, MIT): Snapshot,
+ColumnFamily, WriteBatch, ReadOptions, prebuilt wheels for
+Linux/macOS/Windows. Check that it exposes an indexed batch, or plan the
+overlay in Python. Why not revive my own pyo3 binding: see the
+[decision log](decisions.md).
 
-## Notes and open questions
+## Open questions
 
-Timestamps on coins stay for now (spend-time time-lock checks read them).
-They're derivable from the block's undo record, but that collides with
-pruning undo records beyond reorg depth. The clean future fix is a separate
-append-only `height -> timestamp` map (~100 MB for all of mainnet, never
-needs atomicity). Deferred; it saves 8 of 89 bytes per record.
-
-One real open question: `get_unspent_lineage_info_for_puzzle_hash` (used by
-the mempool for singleton fast-forward) is a puzzle-hash query, and it has
-no home in a pure coin-ID KV store. Maybe a mempool-local index, maybe the
-ExplorerStore. I don't know yet, and it has to be answered before the
-RocksDB backend can fully replace the SQLite store in a default (non-lean)
-node.
+- Timestamps on coins stay for now (spend-time time-lock checks read them).
+  A separate `height → timestamp` map would save 8 of 89 bytes per record,
+  but it isn't append-only through a reorg, so it belongs inside the
+  transition too.
+- Singleton fast-forward (`get_unspent_lineage_info_for_puzzle_hash`) is a
+  puzzle-hash query with retained parent ancestry. It needs a home before
+  lean mode: a mempool-local index or the ExplorerStore.
+- The BlockchainMMRManager is another chain-derived structure. It needs its
+  own persisted-node design. Caching only its root can't support append,
+  pop or proofs.

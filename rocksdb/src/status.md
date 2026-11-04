@@ -1,6 +1,24 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Status
 
 Living page. Dated entries, newest first.
+
+## 2026-11-03 — Plan revised after review; S7 in review, S9 parked
+
+- **S7 (#21179) is out of draft and in review.** It now also converts
+  `ValueError`/`KeyError` from header fetches into `StaleChainViewError`
+  when the pin went stale mid-fetch, following review comments.
+- **S9 (#21455)** is open as a draft, rebased on main. It's parked until a
+  reader needs the chain index (see the [decision log](decisions.md)).
+- A prototype in-node fill for the chain index exists locally and isn't
+  pushed. [Migrations](migration.md) describes the simpler batch copy that
+  should replace it if S11 goes ahead.
+- [Target](target.md), [invariants](invariants.md),
+  [pathway](pathway.md), [migrations](migration.md) and
+  [benchmarks](benchmarks.md) were revised after an independent review.
+  The [audit](blockheightmap-audit.md) has corrections at the top. The
+  [decision log](decisions.md) has the summary.
 
 ## 2026-09-16 — Renewed priority; Stage 2's first PR lands; two old stale PRs closed
 

@@ -1,7 +1,39 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Decision log
 
 Dated decisions with the evidence behind them. Newest last, so the page
 reads as a narrative.
+
+## 2026-11-03 — Independent review: contract first, lean mode later
+
+I had the plan reviewed from scratch by another model, against the code.
+What changed:
+
+- **Lean mode isn't safe yet.** The 07-15 archeology below shows that
+  reorged transactions come back. It doesn't cover validation. A block on a
+  competing fork is validated against the current store *before* any
+  reorg, and it can legitimately spend a coin the main chain spent after
+  the fork point. With spent coins deleted, that block is rejected
+  (`block_body_validation.py:486-525`). Fix: a fork-relative read built from
+  the undo records above the fork, which have to hold full coin records.
+  Lean mode is now S17, gated on that read.
+- **The atomic unit is the whole transition**, not one block: rewind plus
+  every replacement block (including blocks without transactions) plus
+  chain index plus peak, with read-your-writes. The four-method spike API
+  didn't express that. S10 builds the interface on SQLite first.
+- **A SQLite chain index ships only with a reader.** Today the
+  height → hash mapping exists as `in_main_chain` flags (the authority), the
+  `height-to-hash` file (a lazily flushed cache) and RAM. Adding a table
+  nobody reads makes four copies. If S13 doesn't need it, S15 builds the
+  chain index during conversion.
+- **No HF2 wait.** Historical generator refs resolve against their own
+  block's chain forever. HF2 isn't finality, and a storage constant
+  shouldn't quietly become one.
+- **Offline conversion by default.** The drain design is set aside as
+  unsafe ([Migrations](migration.md)).
+- **The ExplorerStore lands before lean mode**, so spent-history queries
+  and singleton lineage have a home before the default node drops them.
 
 ## 2026-07-14 — Binding: rocksdict, not a revived rocks_pyo3
 

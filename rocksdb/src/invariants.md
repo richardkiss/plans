@@ -1,3 +1,5 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Atomicity invariants
 
 The migration ends with the peak and the chain index living inside the coin
@@ -46,6 +48,24 @@ So the invariant the shared transaction protects is exactly one: **the coin
 set, the `in_main_chain` flags, and the peak pointer move together or not at
 all.** Nothing else in the node spans stores in a write transaction.
 
+"Together" is more than per-block. *(Added 2026-11-03.)* The one transaction
+in `_reconsider_peak` covers:
+
+- the new block's blob insert (`add_full_block`, `blockchain.py:438`);
+- the coin rewind to the fork point;
+- every replacement block's coin changes, in order. Blocks without
+  transactions skip the coin call entirely (`:539`, `:570-603`);
+- `rollback`, `set_in_chain` and `set_peak` (`:620-624`).
+
+And reads inside it see its own writes. `reader_no_transaction()` routes the
+writer task's reads to the write connection (`db_wrapper.py:482-493`), so
+block 102 of a replacement branch can spend a coin block 101 just created,
+or one the rewind just resurrected. A replacement has to keep all three
+properties: whole-branch atomicity, a chain-index entry for every height
+including blocks without transactions, and read-your-writes. Otherwise it
+has to explicitly allow committed intermediate prefixes and say how restart
+recovers from one. That's a changed contract, not an implementation detail.
+
 ## Hints are already outside it
 
 Hints are written by `FullNode` after `add_block` returns — after the peak
@@ -88,8 +108,12 @@ store: peak and the chain index (today the `in_main_chain` flags, eventually
 an explicit `height → header_hash` map) move into the coin store's write
 scope, so `new_block` and `rollback_to_block` update coins, chain index, and
 peak in one single-store write. The block blob write moves ahead of the
-consensus commit — a crash in between leaves an orphaned blob, which is
-harmless and re-fetchable.
+consensus commit. A process crash in between leaves an orphaned blob, which
+is harmless. Power loss is different: two independently buffered databases
+don't preserve write order on disk, so the consensus peak can survive while
+the blob it needs doesn't. Either sync the archive write before the
+consensus commit, or check archive coverage on startup and rewind until it
+holds ([Target design](target.md#the-archive-and-recovery)).
 
 After that step there is no cross-store write transaction anywhere in the
 node — not because a wrapper hides it, but because none is needed. The
@@ -116,10 +140,11 @@ inner scope roll back while the outer transaction continues. No node code
 path uses that: no inner scope intentionally fails and continues. So the
 replacement contract for a per-store write ACM is an outer commit scope plus
 auto-join for store methods — two levels, no partial rollback. A RocksDB
-backend satisfies this with one `WriteBatch` per outer scope, since store
-methods only ever need "join the ambient batch". On the read side,
-`reader()` maps to a snapshot and `reader_no_transaction()` to plain point
-reads.
+backend needs one `WriteBatch` per outer scope, *and* reads inside that
+scope that see the batch (an indexed batch or an overlay). Joining the
+batch isn't enough, because a plain `get` reads the state from before it. On
+the read side, `reader()` maps to a snapshot and `reader_no_transaction()`
+to plain point reads.
 
 I'm stating the SAVEPOINT non-use explicitly because it's a fair thing to
 ask about: partial rollback is a real SQLite feature and the per-store ACMs

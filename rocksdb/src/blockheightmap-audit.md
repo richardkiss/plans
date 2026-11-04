@@ -1,3 +1,5 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # BlockHeightMap audit
 
 S13 re-scopes `BlockHeightMap` from a full-history in-RAM cache (~275 MB,
@@ -9,6 +11,25 @@ is the audit: every call site of `Blockchain.get_hash()` /
 past `Blockchain` to call `BlockHeightMap` directly), classified by
 sync/async and by maximum lookback depth below the validation frontier.
 Verified against `main` at `6c193275d` (2026-09-09).
+
+> **Corrections (2026-11-03, independent review).** Re-audit before S13
+> relies on this page.
+>
+> - The MMR rebuild isn't only a startup cost. With no usable fork
+>   context, `blockchain_mmr.py:86-96` walks every height from
+>   `HARD_FORK2_HEIGHT` synchronously, and it's reachable from header
+>   validation through the MMR API (`blockchain.py:1109-1116`,
+>   `block_header_validation.py:1103-1110`). Newer trees reuse MMR state
+>   instead (`blockchain_mmr.py:96-124` on the S9 branch), so re-check
+>   against current main before treating it as an upstream bug.
+> - The bound is relative to the *block being validated*. During a deep
+>   fork that block can be far below the canonical peak, so a window
+>   anchored at the peak can miss it. The window has to follow the
+>   validation frontier, or be preloaded for the fork.
+> - `lookup_block_generators` makes one lookup at an arbitrary input
+>   block's height (`blockchain.py:1077-1079`). One lookup doesn't mean one
+>   block of lookback.
+> - The fast-forward check is at `full_node.py:1737`, not `blockchain.py`.
 
 ## The claim
 
@@ -33,7 +54,7 @@ bypassing the windowed cache) or note it as a known follow-up.
 |---|---|---|---|
 | `difficulty_adjustment._get_blocks_at_height` (`difficulty_adjustment.py:29-30,36`) | sync (block validation) | ≤ ~4,737 blocks, proven below | yes |
 | `add_block`'s fork-point assert (`blockchain.py:373`) | sync (block validation) | 1 block (always `block.height - 1`) | yes |
-| `_load_chain_from_store` fast-forward check (`blockchain.py:1737` via `full_node.py`) | sync-adjacent (batch validation loop) | 0 (always the block just added) | yes |
+| `_load_chain_from_store` fast-forward check (`full_node.py:1737`) | sync-adjacent (batch validation loop) | 0 (always the block just added) | yes |
 | Backtrack short-sync fork search (`full_node.py:822`) | async, but self-bounded | ≤ 5 blocks (`while curr_height > peak_height - 5`) | yes |
 | `lookup_block_generators` main-chain check (`blockchain.py:1079`) | sync (generator resolution during validation) | 1 (peak-membership check only; deep pre-HF2 refs use a different, non-audited fork-walk path — see [Target design](target.md) and S14) | yes |
 | **`Blockchain.create` → MMR rebuild** (`blockchain.py:193`, `blockchain_mmr.py:90-94`) | one-time startup, not validation | **unbounded** — full range from `HARD_FORK2_HEIGHT` to peak | **no — needs a direct chain-index read, not the windowed cache** |

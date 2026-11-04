@@ -1,3 +1,5 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Benchmarks
 
 I extracted every transaction block's coin deltas from a synced mainnet
@@ -119,6 +121,33 @@ behind `SPIKE_BATCH_BLOCKS` if you want to try other window sizes.
 
 The full-run CSVs, enrichment output, and the sequential baseline live in
 [`rocksdb/spike/plots/full/`](https://github.com/richardkiss/plans/tree/main/rocksdb/spike/plots/full).
+
+## Caveats found in review
+
+*(Added 2026-11-03.)* The engine gap is real and big enough to justify
+building the backend. These caveats are about what the harness does and
+doesn't prove:
+
+- **The SQLite backend's transaction boundary differs from its contract.**
+  `coin_store.py:141-193` commits coin changes when `with self.conn`
+  exits; the undo record and peak are written afterward (`:195-207`) and
+  usually committed with the *next* block. Compare backends with the same
+  boundary.
+- **Lean rewind resurrects ephemeral coins.** `coin_store.py:735-753`
+  deletes created coins and then restores every spent coin, so a coin
+  created and spent in the same rewound block comes back. Restore spends
+  first, or skip ephemerals. The same rewind writes a zero peak hash
+  (`:759-761`), and both RocksDB backends scan the whole DB for undo
+  records (`:477-493`, `:713-729`).
+- **Replay is not a validation workload.** The timed loop calls
+  `process_spends` directly (`replay.py:240-248`), and rewind is disabled
+  (`:286-292`). There's no chain index, no fork validation, no wallet
+  load, and no full-node concurrency. Matching the four-method surface
+  doesn't show that the surface is enough. The [target](target.md) lists
+  what it was missing.
+- **The HDD / small-RAM goal is unmeasured.** Throughput by height mixes
+  database growth with changing block contents, so it doesn't isolate
+  B-tree depth as the cause.
 
 ## Reproducing
 

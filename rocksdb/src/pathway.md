@@ -1,3 +1,5 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Pathway
 
 Baby steps. Each one is a small, reviewable PR; the system is fully
@@ -5,11 +7,12 @@ consistent after every step, and each carries a visible payoff on its own —
 a tach exception deleted, raw SQL removed, a latent bug closed. Nothing
 lands that isn't independently valuable.
 
-*(Rewritten 2026-07-27. The original five-step outline on this page turned
-into the staged ladder below once the work started landing as real PRs.
-The biggest structural change: the peak/chain-index migration now happens
-**before** HF2, on SQLite — only the physical split and the new backends
-wait for the fork.)*
+*(Rewritten 2026-07-27 from the original five-step outline. Revised again
+2026-11-03 after an independent review: Stage 3 now starts with the
+consensus transition API instead of a schema ladder; a SQLite chain index
+ships only together with a reader that needs it; the HF2 wait point is gone;
+the ExplorerStore (now S16) comes before lean mode (now S17); and the
+default backend migration is offline. Stages 0-2 are unchanged.)*
 
 ## Stage 0 — write the invariants down first (done)
 
@@ -24,8 +27,7 @@ in-thread.
 ## Stage 1 — hygiene and the tach exception (done)
 
 Five PRs, no behavior change, each independently worth having. All five
-approved 2026-07-27; merged except #21166, which is waiting on the merge
-pipeline.
+merged 2026-07-27/28.
 
 - **S1 — #21165.** The node's only raw-SQL read above the store layer (a
   `hints` query in `full_node_api`) becomes a `HintStore` method. No SQL
@@ -61,7 +63,7 @@ preserved.
   manager yielding a consistent view — peak plus batch coin reads that are
   guaranteed to agree. SQLite implements it as a read transaction; RocksDB
   will use a Snapshot; tests get a frozen dict.
-- **S7 — #21179 (draft).** `ChainView`: chain-index reads pinned to one
+- **S7 — [#21179](https://github.com/Chia-Network/chia-blockchain/pull/21179) (in review).** `ChainView`: chain-index reads pinned to one
   block, so "the block at height N" stops silently depending on whatever
   the peak happens to be. First consumer is weight-proof creation, whose
   height walks interleave ~14 chain-index reads with database awaits and
@@ -73,97 +75,118 @@ preserved.
   bail if not — ~8 sites) onto pinned views, deleting the repeated
   reorg-detection boilerplate.
 
+One more thing Stage 2 owes S13: `ChainView`'s pin check is atomic today
+only because it reads the synchronous in-RAM map. A bounded cache with
+async misses breaks that argument. S13 needs async, batched views over a
+snapshot first, so that an old pin that falls out of the window isn't
+mistaken for a stale one.
+
 *Acceptance:* new tests for snapshot/view semantics; zero behavior change
 for existing callers.
 *Rollback:* additive — revert.
 
-## Stage 3 — peak + chain index become consensus state (dual-write ladder)
+## Stage 3 — the consensus transition, on SQLite
 
-The heart of the migration, still entirely on SQLite: the
-transaction-boundary fix is testable against the existing engine before any
-RocksDB code exists. Each rung keeps the old and new structures consistent
-in the *same* transaction, so every intermediate commit is a working node,
-and the old structure stays maintained until a later rung retires it. S10
-is the first rung that needs to run lazily against an already-populated
-database rather than inline in a transaction — see
-[Migrations](migration.md) for the general framework it establishes.
+The atomicity contract ([invariants](invariants.md)) is the hard part of the
+whole migration. It's testable against the existing engine before any
+RocksDB code exists. So the *logical* boundary comes first, over today's
+tables. Moving tables comes later, and only where a reader needs the new
+layout.
 
-- **S9.** A new `height → header_hash` chain-index table, written inside
-  the existing `add_block` transaction. No readers yet; consistent by
-  construction.
-- **S10.** Switch readers — the height map's load path, `height_to_hash`
-  resolution, S7's views — to the chain index.
-- **S11.** Move peak and chain-index writes into the coin store's write
-  scope: `new_block` / `rollback_to_block` update coins, chain index, and
-  peak atomically. **This is the step that dissolves the node's one
-  cross-store transaction** ([invariants](invariants.md)). The block-blob
-  write moves ahead of the consensus commit — a crash in between leaves an
-  orphaned blob, harmless and re-fetchable. `CoinStoreProtocol` is renamed
-  `ConsensusStore` here, where the name becomes true.
-- **S12.** `DBWrapper2` becomes store-internal. After S11 nothing above the
-  stores opens transactions, so the per-store context managers are the only
-  surface. It lives on quietly inside the SQLite implementations — removed
-  from the interface not because it's bad, but because it's unreferenced.
-- **S13.** `BlockHeightMap` re-scoped, not removed: it becomes the
-  store-owned in-RAM cache of the chain index, bounded to a ~10k-height
-  window near the validation frontier (~400 KB, constant forever) instead
-  of the full 275 MB that grows with the chain. An audit of every
-  synchronous caller says the bound is safe — the deepest look-back on a
-  sync path is provably ≤ 5,121 blocks below the block being validated;
-  everything that reads deeper is already async and moves to
-  snapshot/view reads. ([The audit has its own page](blockheightmap-audit.md).)
+- **S9 — [#21455](https://github.com/Chia-Network/chia-blockchain/pull/21455)
+  (draft, parked).** A `chain_index(height → header_hash)` table,
+  dual-written with `in_main_chain` in the same transaction. Correct by
+  construction, but it has no readers, and on an upgraded node it only
+  covers heights from the upgrade on. It ships only together with S11's
+  fill and a consumer. Otherwise it's a fourth copy of the same data.
+- **S10. The transition API over the existing tables.**
+  `apply_transition(fork_height, blocks)` on the consensus store: rewind
+  plus every replacement block's coin changes, flags and peak, inside one
+  transaction, with read-your-writes. Blocks without transactions are
+  included. `_reconsider_peak` and the simulator's `revert_block_height`
+  both call it, so no caller above the stores sequences five store calls
+  inside a transaction any more. Payoff: the contract becomes an interface
+  with tests (exceptions, cancellation, a branch that depends on its own
+  earlier blocks), and the RocksDB backend later implements the same
+  interface. `CoinStoreProtocol` is renamed `ConsensusStore` here, where the
+  name becomes true.
+- **S11. The chain index becomes the authority (only if a reader earns
+  it).** The readers that could earn it are S13's bounded height map and
+  faster startup. If neither is happening, skip this step: S15 builds the
+  chain index during conversion. If it happens:
+  - *Fill* existing history by copying `in_main_chain` rows in height
+    batches from one snapshot. Check continuity in memory with `prev_hash`,
+    the way BlockHeightMap already loads windows
+    (`block_height_map.py:190-235`). The flags are the source because they
+    commit atomically with the peak and the coins. The `height-to-hash` file
+    is a lazily flushed cache, and startup only checks it back to the
+    nearest sub-epoch summary, so damage further back can survive. It can
+    speed things up, but only if verified. A per-block `prev_hash` walk is
+    the repair fallback, not the default: it costs ~8.6M awaited lookups.
+  - *Move every flag reader* to the chain index: the BlockHeightMap
+    rebuild, `get_full_blocks_at` / `get_generators_at`, the record and
+    block range reads, the startup record cache, the compaction queries and
+    counts, and `chia db validate` (`block_store.py:316-598`,
+    `db_validate_func.py:149-170`).
+  - *Retire* the `height-to-hash` file, and stop writing `in_main_chain`.
+    Older binaries can't read that database correctly any more, so it's a
+    schema-gated, one-way step, not a reversible dual-write.
+- **S12.** `DBWrapper2` becomes store-internal. This is a consequence of
+  S10, not its own project: nothing above the stores opens transactions
+  any more.
+- **S13.** `BlockHeightMap` becomes a bounded cache (~10k heights). This is
+  memory work, and it can be done on its own once S11 and Stage 2's async
+  views exist. Re-audit first: the [audit](blockheightmap-audit.md) has
+  corrections (the MMR's full-history walk is reachable from header
+  validation, and a bound relative to the block being validated isn't a
+  bound relative to the peak during a deep fork). Decide
+  `BlockchainMMRManager`'s persistence in the same PR.
 
-*Acceptance (per rung):* crash-consistency at reorg boundaries; peak, chain
-index, and coin set can never disagree.
-*Rollback:* each rung is a dual-write — revert the rung, the previous
-structure is still there and still correct.
+*Acceptance (per rung):* crash and cancellation tests at reorg boundaries;
+peak, chain index and coin set never disagree.
+*Rollback:* S9, S10 and S12 revert cleanly. S11's flag retirement is
+one-way and gated.
 
-## Wait point — HF2 lands (external dependency)
+## Stage 4 — backends
 
-HF2 stops *new* blocks from using generator backrefs; it doesn't remove them.
-Every block below the fork height that already has a
-`transactions_generator_ref_list` still needs `get_generator` /
-`get_generators_at` on sync-from-genesis, forever — that machinery doesn't
-expire. What HF2 buys is narrower but still real: since a ref can only point
-below the referring block, and no block at or above HF2_HEIGHT has one,
-every ref'd height is fixed once the peak passes HF2_HEIGHT +
-`MAX_REORG_DEPTH` — no reorg can reach it. At that point the lookup is a
-plain read against frozen history, not a live member of the consensus
-store's atomic unit. What I don't want to build backend infrastructure
-around is that consistency requirement, which does expire — the lookup
-itself moves to the archive instead of disappearing. HF2 is active
-priority 1 upstream,
-so this is waiting on a moving train, not a parked dependency.
+There is no HF2 wait point any more. HF2 removes generator refs from *new*
+blocks, but historical blocks keep theirs, and a ref resolves against that
+block's own chain. So the branch-aware lookup stays. Separating it from the
+consensus store doesn't need the fork.
 
-## Stage 4 (post-HF2) — physical split and backends
+- **S14.** The archive is addressed by hash. Historical generator lookups
+  resolve height → hash against the chain being validated, then fetch the
+  blob by hash. The fork-aware path stays.
+- **S15. The RocksDB backend, spent coins kept.** Before it's built, fix
+  the spike: its SQLite backend commits undo and peak outside the coin
+  transaction, and its lean rewind resurrects ephemeral coins
+  ([Benchmarks](benchmarks.md#caveats-found-in-review)). Then measure the
+  real goal (HDD, small RAM, full-node replay with fork validation). The
+  backend ships with:
+  - offline, resumable conversion into a new destination, validated
+    (coins, every height, peak, archive coverage, undo) before a durable
+    backend-selection manifest switches the node over;
+  - fsck and a rollback tool;
+  - a disk preflight that budgets source + destination + WAL + compaction
+    space;
+  - the original SQLite file kept as a named checkpoint with a documented
+    way back.
 
-- **S14.** `get_generator` / `get_generators_at` leave the consensus store's
-  write scope; they become archive-side reads over frozen pre-HF2 history.
-  The fork-chain branch of the lookup (needed today for refs into a
-  not-yet-main-chain block) is deleted once peak ≥ HF2_HEIGHT +
-  `MAX_REORG_DEPTH` makes it unreachable.
-- **S15.** The RocksDB backend, config-selected; SQLite stays the default
-  initially. Ships in the same phase, not after: an fsck/rollback tool
-  (data-integrity tooling arrives *with* the backend), a metadata key
-  family (schema version, network id, lean/full flag, earliest undo
-  height), the slimmed coin record, per-height chain-index keys. The
-  migration tool is a one-pass read of a single SQLite snapshot as two
-  height-sorted streams. The archive needs the chain index (the pre-HF2
-  slice suffices) to resolve S14's historical generator lookups by height.
-  Whether the build itself can run in the background instead of offline,
-  with a restart-boundary cutover: [Migrations](migration.md) works
-  through it (yes, with conditions).
-- **S16.** Lean mode — delete spent coins, keep full records in the undo
-  log — plus a bounded undo window GC'd by a compaction filter. Needs the
-  singleton fast-forward question ([Target design](target.md)) answered
-  first, and a blessed `MAX_REORG_DEPTH` constant.
-- **S17.** The explorer split: puzzle-hash/parent indexes and hints move to
-  a separate, *deletable* database with a backfill tool — deletable means
-  rebuildable, and rebuilding is also the migration path. Engine decided by
-  its own benchmark; SQLite is genuinely fine at secondary-index queries.
-  The archive (full block blobs) stays SQLite either way.
+  Config-selected; SQLite stays the default at first.
+  [Migrations](migration.md) has the conversion design.
+- **S16. ExplorerStore.** Puzzle-hash and parent indexes and hints move to
+  a separate, deletable database with its own published peak and a rebuild
+  path from the archive. Singleton lineage gets a home here or in the
+  mempool. This must land before S17 removes spent history from the
+  default node.
+- **S17. Lean mode.** Spent coins are deleted, with full records kept in
+  the undo log. Gated on the fork-relative read
+  ([Target design](target.md#fork-validation-needs-historical-coin-state))
+  being built and tested. Undo pruning is gated separately, on defined and
+  exercised behavior for a reorg deeper than the retained window.
 
-*Acceptance:* full mainnet sync on the new backend; fsck passes; reorg
-tests pass; the spike's curve confirmed on a real node.
-*Rollback:* config flag back to SQLite; the SQLite store is untouched. Lean
-mode rolls back to the spent-kept backend.
+*Acceptance:* full mainnet sync on the new backend; fsck passes; reorg and
+competing-fork tests pass; the spike's curve is confirmed on a real node.
+*Rollback:* switch back through the manifest to the SQLite checkpoint and
+replay forward. Once lean mode has pruned history, it can't be rolled back
+by flipping config. Going back means a rebuild.

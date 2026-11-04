@@ -1,203 +1,118 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Migrations
 
-Every rung on the [pathway](pathway.md) that touches an existing node's
-database needs an answer to the same question: someone upgrades a running
-node, and it has the old database on disk. S9 through S17 answer it five
-different ways, and I kept solving it ad hoc until S10 forced the issue —
-so this page writes the framework down once, worked out against S10's
-actual backfill and against whether S15's engine swap could use it too.
+Every step on the [pathway](pathway.md) that touches an existing node's
+database has to answer the same question: someone upgrades a running node,
+and the old database is on disk. This page covers the two steps that
+actually move data, S11 (the chain index, if it happens) and S15 (the
+RocksDB backend).
 
-## The framework
+*(Revised 2026-11-03. The earlier version proposed a general four-kind
+migrations framework, a background S15 build, and a "drain" that moved
+SQLite rows out as they were copied. The review found the drain unsafe and
+the background build unspecified. Both are below under "Considered and set
+aside". A framework for one background job is premature.)*
 
-One table, next to `database_version` (which stays scoped to the v1/v2
-schema flag — I'm not overloading it):
+## S15: offline, resumable conversion
 
-```sql
-CREATE TABLE IF NOT EXISTS migrations(id TEXT PRIMARY KEY, state TEXT, progress BLOB)
-```
+The default is the shape `chia db upgrade` already has: stop the node,
+convert, validate, switch.
 
-Created the same way every other table in this schema is: `CREATE TABLE IF
-NOT EXISTS`, called from whichever store's own `create()` needs it, no new
-central "opens all stores" call site. Every migration declares one kind:
+- **Source:** one read snapshot of the SQLite database. Record its identity
+  (network id, peak height and hash, schema version) in the destination
+  before writing anything.
+- **Streams:** creations ordered by `confirmed_index` and removals ordered
+  by `spent_index`. Undo records and per-height aggregates need input
+  grouped by height, so the sort is required. Every height gets a
+  chain-index key and an undo record, including blocks without
+  transactions. The spike's `merge_blocks` emits only heights with coin
+  changes and synthesizes hashes, so it isn't the converter yet.
+- **Resume:** progress is stored in the destination with the source
+  identity next to it. A restart checks that both match, and starts over
+  if they don't. Resuming because an undo key exists isn't enough.
+- **Validate before switching:** coin counts and spot checks, a
+  chain-index entry for every height that chains by `prev_hash` up to the
+  recorded peak, undo coverage for the retained window, and an archive blob
+  for every height.
+- **Switch:** a durable backend-selection manifest, written last. Until it
+  exists the node keeps using SQLite.
+- **Keep the SQLite file** as a named checkpoint. Switching back means
+  pointing the manifest at it and replaying forward from its peak. It isn't
+  a current alternate backend, it's an old copy.
 
-- **instant** — DDL only, inline at open. S9's `chain_index` table is
-  already this, implicitly. The framework doesn't change what it does,
-  just gives it a row (`state = done` right after the DDL) so there's one
-  place to see what's happened to a given database file instead of
-  inferring it from `sqlite_master`.
-- **background** — resumable, the node serves while it runs, readers fall
-  back to the old structure until `state = done`. S10 below is the first
-  of these.
-- **required** — must be `done` before the node serves. Resumable and
-  cheap: run inline at startup with a progress log. Big: refuse to start,
-  "run `chia db migrate`."
-- **background + cutover** — background until a small enough remainder
-  that finishing needs a brief stop. S15, maybe — see below.
+**Disk:** budget the whole existing SQLite file, plus the destination,
+plus SQLite's WAL, plus RocksDB's compaction and build workspace. The
+benchmark sizes (99.5 GB SQLite consensus-only vs 68.3 / 54.2 GB RocksDB)
+come from coin-store experiments. They aren't a production whole-file
+number. The real file also holds `full_blocks`, hints and the other
+tables. Freed pages in a SQLite file never come back without a rewrite
+(`VACUUM`), which rewrites the archive too. A second volume changes where
+the space goes, not how much is needed. Preflight checks this before
+starting.
 
-`chia db migrate` runs every pending migration to completion: same
-batch/resume code as the background runner, just no throttle and no
-pause-for-sync. It's the escape hatch — an operator who wants a
-`required` migration's precondition satisfied today, not whenever the
-background pass gets there, runs this once. It is deliberately not the
-default post-upgrade UX: `chia db upgrade` (the v1→v2 tool, hours
-offline, twice the disk) is what "run a migration command" already means
-to users, and a lazy background fill doesn't deserve to spend that
-goodwill by forcing itself into the foreground.
+Also worth measuring: building the coin state directly (unspent coins plus
+the undo records for the retained window), against replaying every
+historical coin operation. The direct build is likely much cheaper.
 
-No dependency graph — a linear list. S9 through S13 are already strictly
-ordered on the [pathway](pathway.md); nothing here needs more structure
-than that.
+## S11: filling the chain index in the node
 
-Precedent already in the tree, worth naming: the height-to-hash cache
-already does a resumable-ish backward walk from the peak whenever its
-on-disk file goes stale, rebuilding whatever's missing before serving.
-S10 is that same walk, except it persists across restarts instead of
-starting over every time.
+This applies only if S11 ships. The data already exists: every
+`full_blocks` row has `height` and `in_main_chain`.
 
-## Worked example: S10, the `chain_index` backfill
+- Copy `in_main_chain` rows into `chain_index` in height batches, from one
+  snapshot per batch. Check one row per height and `prev_hash` continuity
+  in memory, the way BlockHeightMap loads windows today.
+- Keep a low-water mark `low` (rows exist for every height in
+  `[low, peak]`) in the same transaction as each batch. A rollback that
+  deletes rows below `low` lowers it to fork height + 1 in the same
+  transaction.
+- Make completion visible (a log line and `chia db validate`) before any
+  reader trusts the table.
+- Mark the database so that a binary which ignores `chain_index` can't
+  open it and later hand back a stale table. A one-way schema gate is
+  simplest.
 
-S9 added a `height -> header_hash` table, dual-written going forward from
-whichever block happens to be the peak when a node upgrades
-([Atomicity invariants](invariants.md)). Existing history below that point
-starts out missing. S10 fills it in: a `background` migration, walking
-`prev_hash` from the oldest filled height downward, in batches, persisting
-a low-water mark so a restart resumes instead of restarting.
+A prototype of the `low` bookkeeping exists (commit `538677bcd6` on
+`store-split-s9-5-chain-index-fill`, not pushed). It walks `prev_hash` one
+awaited query per block. The bookkeeping is sound: a rollback below
+`low - 1` changes `low` and the batch is discarded; a fork exactly at
+`low - 1` leaves the ancestry being filled intact. But the walk is the slow
+choice. It also trusts `MIN(height)` as proof of contiguity at bootstrap,
+and doesn't check stored heights or the genesis block. Rebuild it on the
+batch copy above if S11 goes ahead.
 
-The invariant: the table is correct and contiguous on `[low, peak]`, empty
-below `low`. Each batch reads blocks by chasing `prev_hash` backward
-(cheap point reads, safe to do without the write lock — historical block
-rows are never mutated, only orphaned), then commits a batch of rows plus
-the new `low` in one transaction. A crash mid-batch loses nothing: SQLite
-either commits the whole batch and the pointer move, or neither. A reorg
-deeper than the already-filled range is the one real interaction with live
-writes, and it turns out to need one extra line where the node already
-handles rollbacks: clamp the low-water mark down to the fork point,
-exactly mirroring what rollback already does to the table itself. Readers
-that only need a single height can start using the table immediately for
-anything at or above the low-water mark; the full height-map load switches
-over only once the fill completes, since a partial-source hybrid loader
-isn't worth the complexity for a one-time startup cost.
+## Considered and set aside
 
-## Could S15 be background too?
+**Background S15 build in phases.** Split `[0, peak]` into height ranges,
+each with its own short snapshot, then catch up. It isn't wrong, but it's
+not specified. Each phase needs an anchor hash and source identity,
+progress made durable together with the destination, and ancestry checks
+on restart. A reorg can delete source rows or move spends back to unspent,
+and "spends after the first snapshot" isn't a change log for those
+reversals. Revisit only if measured offline cost says it's needed.
 
-S15's plan today is `chia db upgrade`'s shape: an offline, one-pass
-conversion from the SQLite snapshot to RocksDB
-([Target design](target.md), [Benchmarks](benchmarks.md) for the replay
-timings this is compared against — half a day even on the fast engine).
-Worth asking whether it could run in the background instead, the way S10
-does. Sketch: bulk-build the RocksDB store from SQLite in the background,
-catch up whatever landed during the build directly from `coin_record` (no
-generator re-execution — the same linear-scan-by-height trick the
-benchmark extraction already uses), and finish at the next restart once
-the remaining delta is small. Verdict: **yes, with fixes.**
+**Draining SQLite into RocksDB.** From the start, all writes go to
+RocksDB, reads try RocksDB and fall back to SQLite, and rows move out of
+SQLite in the background. This is unsafe as written:
 
-**Don't pin one read snapshot for the whole build.** A single, hours-long
-snapshot pins SQLite's WAL from checkpointing for its whole duration and
-ties up one of a small pool of read connections — real cost on the
-small-disk, weak-hardware boxes this migration exists to help. Instead,
-split `[0, peak]` into phases (a hundred-odd height ranges) and give each
-its own short-lived snapshot: stream both height-sorted queries the tool
-already needs (creations by `confirmed_index`, removals by `spent_index`)
-restricted to that phase's range, write the batch, record the phase index
-as the resume point, close the snapshot. This isn't new machinery — the
-two streams already have to be consumed in height-grouped chunks to
-assemble one undo record per height in O(1) memory, so phasing just
-checkpoints boundaries the tool was going to pass through anyway. It pays
-for itself three ways: resumability becomes the phase index, exactly
-S10's watermark shape one level up; a reorg only invalidates phases whose
-range reaches above the fork height, not the whole build; and the final
-catch-up delta shrinks to a clean rule — rows with `spent_index` past the
-*first* phase's snapshot height, or `confirmed_index` past the *last*
-phase's — bounded by spends during the build's wall-clock duration, not
-by the size of the coin set.
+- In a spent-deleting store, a missing RocksDB key is ambiguous: either not
+  copied yet, or deliberately spent. Falling back to SQLite resurrects
+  spent coins unless durable tombstones shadow the source.
+- A copy racing a spend can overwrite newer state.
+- Deleting source rows is another crash-sensitive copy-then-delete step.
+- Reorgs below the cutover height still need recovery, even if they're rare.
+- "Delete the empty SQLite file" deletes the block archive, which lives in
+  the same file.
 
-Two more things worth naming:
+## What migrates, by step
 
-- The delta needs block hash and timestamp per height too, not just
-  `coin_record` — a second, still-cheap table join, not a hole in the
-  no-generator-execution claim, just an incomplete accounting of which
-  tables are involved.
-- "Bounded by `MAX_REORG_DEPTH`" isn't true yet — that constant doesn't
-  exist as an enforced limit in the node today ([Decision log](decisions.md)
-  has it as a still-pending lean-mode parameter). A reorg past every
-  phase built so far is rare, not bounded; the tool needs to handle a
-  from-scratch restart as a real case, even if in practice it never
-  happens ([Decision log](decisions.md)'s reorg archeology: 145 orphans
-  in all of mainnet history, essentially all single-block).
-
-### Sharding the drain instead of building alongside
-
-The sketch above still keeps a full SQLite copy around for the whole
-build. Could it drain — delete rows out of SQLite as they're copied over —
-and skip the 2× disk entirely? Two issues.
-
-**Routing.** Coin lookups key by `coin_id` / `puzzle_hash`, not height, so
-draining can't be routed by height the way the build above is. Writes
-can't split by "which store holds this coin" either: a single block both
-creates and spends coins, and if creates went to RocksDB while spends of
-undrained coins went to SQLite, one block's write would need to touch both
-stores atomically — recreating the cross-store transaction
-[Atomicity invariants](invariants.md) just eliminated. So the only
-consistent shape is an overlay: from the *first* moment of migration,
-every write goes to RocksDB only, and SQLite becomes a read-only body
-being drained in the background, never written again. That moves the
-write cutover to the *start*, closer to S9's dual-write shape than to
-"build alongside, then flip." Reads check RocksDB first, fall back to
-SQLite for anything not yet drained. Reorgs into pre-cutover heights need
-the *old* rollback path (SQLite's `coin_record` scan — RocksDB has no
-undo log for blocks it never processed), so cutover should happen at a
-height already confirmed enough that reaching back past it is
-astronomically unlikely, not just eventually so.
-
-**SQLite doesn't give space back.** No `auto_vacuum` is set anywhere in
-the schema, so deletes free pages to an internal freelist but the file
-never shrinks without `VACUUM` — and `VACUUM` itself needs scratch space
-≈ the *current live* content, while the old, still-full-size file exists
-until the swap. Work the math with `ρ` = destination/source size for the
-same data (not 1): draining fully with no `VACUUM` at all, then deleting
-the empty file, peaks at `1+ρ`. One `VACUUM` at the right point (roughly
-where the not-yet-drained SQLite fraction and the drain's own progress
-balance out) does better. Plug in real numbers instead of assuming equal
-sizes: [Benchmarks](benchmarks.md)'s full-mainnet run measured
-`sqlite-consensus` at 99.5 GB against `rocks` at 68.3 GB and `rocks-lean`
-at 54.2 GB for the *same* history — `ρ ≈ 0.69` / `0.55`. So "2×" was
-already an overestimate: no `VACUUM` at all peaks around `1.5-1.7×`, and
-one well-timed `VACUUM` brings that down to roughly `1.2-1.3×`. But
-`VACUUM` is file-granular, not table-granular — `coin_record` shares a
-file with the archive (`full_blocks`, which stays SQLite forever, per
-S17), so a `VACUUM` rewrites that too, every time, scaling with the whole
-database's size (215 GB and growing) rather than just `coin_record`'s
-share — closer in cost to `chia db upgrade`'s own offline rewrite than to
-a quick operation. `VACUUM INTO` bounds the exclusive-lock window to the
-final swap instead of the whole rebuild, if a mid-drain `VACUUM` is used
-at all. Recommendation: **skip it unless disk is genuinely tight** — the
-`1.5-1.7×` peak self-resolves the moment the drain finishes and the empty
-file gets deleted, no exclusive-lock maintenance window required. Make a
-mid-drain `VACUUM` an operator flag, not part of the default path. On two
-volumes, none of this applies — put the destination on the other one.
-
-### Cutover
-
-The write-target switch to RocksDB is the one atomic, restart-boundary
-event, and it happens at the *start* of the overlay design above, not the
-end — a live hot-swap partway through would reintroduce the
-[db_v3 lesson](decisions.md)'s bug class (splitting the atomic unit across
-two stores, even briefly). There's no second cutover needed at
-completion: reads already prefer RocksDB throughout, and finishing the
-drain just deletes an empty SQLite remnant. `chia db migrate --cutover`
-still names the foreground escape hatch — "run every phase now,
-unthrottled" — matching S10's `chia db migrate`.
-
-## Kind, by step
-
-| Step | What migrates | Kind |
+| Step | What migrates | How |
 |---|---|---|
-| S9 | `chain_index` table (DDL) | instant |
-| S10 | `chain_index` historical fill | background |
-| S11 | drop `in_main_chain` writes | required, gated on S10 done |
-| S12 | `DBWrapper2` becomes store-internal | n/a — types only |
-| S13 | height map becomes a bounded cache | n/a — in-RAM only |
-| S14 | generator lookup's fork-chain branch dropped | n/a — height-gated |
-| S15 | RocksDB backend | required today; background + cutover above |
-| S16 | lean mode / bounded undo window | background (compaction-filter GC) |
-| S17 | ExplorerStore split | background (backfill tool, rebuildable) |
+| S9 | `chain_index` table (DDL) | inline at open |
+| S10 | nothing (interface only) | n/a |
+| S11 | chain index fill; flag retirement | batched copy in the node; one-way schema gate |
+| S12-S14 | nothing on disk | n/a |
+| S15 | RocksDB backend | offline, resumable, validated, manifest switch |
+| S16 | ExplorerStore | rebuild from archive (deletable) |
+| S17 | lean mode / undo window | in place, after fork-relative reads ship |
