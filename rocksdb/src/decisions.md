@@ -5,36 +5,6 @@
 Dated decisions with the evidence behind them. Newest last, so the page
 reads as a narrative.
 
-## 2026-11-03 — Independent review: contract first, lean mode later
-
-I had the plan reviewed from scratch by another model, against the code.
-What changed:
-
-- **Lean mode isn't safe yet.** The 07-15 archeology below shows that
-  reorged transactions come back. It doesn't cover validation. A block on a
-  competing fork is validated against the current store *before* any
-  reorg, and it can legitimately spend a coin the main chain spent after
-  the fork point. With spent coins deleted, that block is rejected
-  (`block_body_validation.py:486-525`). Fix: a fork-relative read built from
-  the undo records above the fork, which have to hold full coin records.
-  Lean mode is now S17, gated on that read.
-- **The atomic unit is the whole transition**, not one block: rewind plus
-  every replacement block (including blocks without transactions) plus
-  chain index plus peak, with read-your-writes. The four-method spike API
-  didn't express that. S10 builds the interface on SQLite first.
-- **A SQLite chain index ships only with a reader.** Today the
-  height → hash mapping exists as `in_main_chain` flags (the authority), the
-  `height-to-hash` file (a lazily flushed cache) and RAM. Adding a table
-  nobody reads makes four copies. If S13 doesn't need it, S15 builds the
-  chain index during conversion.
-- **No HF2 wait.** Historical generator refs resolve against their own
-  block's chain forever. HF2 isn't finality, and a storage constant
-  shouldn't quietly become one.
-- **Offline conversion by default.** The drain design is set aside as
-  unsafe ([Migrations](migration.md)).
-- **The ExplorerStore lands before lean mode**, so spent-history queries
-  and singleton lineage have a home before the default node drops them.
-
 ## 2026-07-14 — Binding: rocksdict, not a revived rocks_pyo3
 
 I had a bespoke pyo3 binding (`rocks_pyo3`, ~212 lines of Rust) from earlier
@@ -102,6 +72,10 @@ production design.
 Decision: rocks-lean is the target semantics. Spent-coin lookups become the
 ExplorerStore's job.
 
+> **Superseded 2026-11-03** (entry below): lean mode is deferred to S17,
+> gated on fork-relative reads and on routing consensus's own per-height
+> history readers.
+
 ## 2026-07-15 — Keep timestamps on coins, for now
 
 Coin timestamps are consulted at spend time (`ASSERT_SECONDS_RELATIVE`
@@ -113,6 +87,10 @@ Decision: keep the timestamp field (8 of 89 bytes per record) for now. The
 clean future fix is a separate append-only `height -> timestamp` map (~12 B
 per transaction block, ~100 MB for all of mainnet, never needs atomicity).
 A post-migration option, not on the critical path.
+
+> **Partly superseded 2026-11-03:** a `height -> timestamp` map isn't
+> append-only through a reorg, so it has to be written inside the
+> transition, not on the side.
 
 ## 2026-09-17 — Generator lookup survives HF2; it moves, doesn't die
 
@@ -134,3 +112,48 @@ store, onto the archive, with the fork-chain branch of the lookup dropped
 once the reorg-immunity bound holds. No `ChainView`/pin form needed for it;
 a constant "main chain, frozen below HF2" context is all post-HF2 callers
 ever see.
+
+> **Superseded 2026-11-03** (entry below): the fork-chain branch stays.
+> `MAX_REORG_DEPTH` isn't enforced anywhere, and a ref resolves against
+> its own block's chain, so the lookup stays branch-aware and moves to the
+> archive by hash.
+
+## 2026-11-03 — Independent review: contract first, lean mode later
+
+I had the plan reviewed from scratch by another model, against the code.
+What changed:
+
+- **Lean mode isn't safe yet.** The 07-15 archeology below shows that
+  reorged transactions come back. It doesn't cover validation. A block on a
+  competing fork is validated against the current store *before* any
+  reorg, and it can legitimately spend a coin the main chain spent after
+  the fork point. With spent coins deleted, that block is rejected
+  (`block_body_validation.py:486-525`). Fix: a fork-relative read built from
+  the undo records above the fork, which have to hold full coin records.
+  Lean mode is now S17, gated on that read.
+- **The atomic unit is the whole transition**, not one block: rewind plus
+  every replacement block (including blocks without transactions) plus
+  chain index plus peak, with read-your-writes. The four-method spike API
+  didn't express that. S10 builds the interface on SQLite first.
+- **A SQLite chain index ships only with a reader.** Today the
+  height → hash mapping exists as `in_main_chain` flags (the authority), the
+  `height-to-hash` file (a lazily flushed cache) and RAM. Adding a table
+  nobody reads makes four copies. If S13 doesn't need it, S15 builds the
+  chain index during conversion.
+- **No HF2 wait.** Historical generator refs resolve against their own
+  block's chain forever. HF2 isn't finality, and a storage constant
+  shouldn't quietly become one.
+- **Offline conversion by default.** The drain design is set aside as
+  unsafe ([Migrations](migration.md)).
+- **The ExplorerStore lands before lean mode**, so spent-history queries
+  and singleton lineage have a home before the default node drops them.
+- **Consensus reads coin history too.** On newer main, the MMR rebuild
+  calls `get_coin_commitments_root` for every post-HF2 height, and header
+  filters read per-height additions and removals. Lean mode has to keep
+  these answerable or persist what they derive.
+- **Three questions are open for me to decide:** what serves puzzle-hash
+  and lineage queries on a RocksDB node (ship S16 with S15, or a
+  restricted validator first); how the archive stays ahead of consensus
+  (sync it first, or a coverage checkpoint); and the SQLite checkpoint
+  layout (same file frozen, or split files). See
+  [Target design](target.md) and [Migrations](migration.md).

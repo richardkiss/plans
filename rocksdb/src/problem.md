@@ -1,7 +1,11 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Problem
 
 Chia's full node keeps the coin set — the UTXO-like state that consensus
-validates against — in SQLite, in one `coin_record` table with four indexes.
+validates against — in SQLite, in one `coin_record` table with four indexes
+(five on nodes that build the conditional fast-forward lineage index,
+`coin_store.py:74-92`).
 Two of those (puzzle hash and parent coin) exist for wallet and explorer
 queries, not for consensus. Every block pays the B-tree maintenance cost for
 all four anyway.
@@ -13,8 +17,9 @@ mainnet history (details in [Benchmarks](benchmarks.md)), SQLite — even
 with the explorer indexes already dropped — slowed from thousands of
 blocks per second in the early chain to ~15 at the tip, and to 1–5 in the
 dust-storm segments. The full replay took 101 hours against RocksDB's 13
-to 15. B-tree index maintenance grows with tree depth; the measured curve
-never flattens.
+to 15. The measured curve never flattens. My guess is B-tree maintenance
+and scattered page reads as the tables grow, but the replay mixes database
+growth with changing block contents, so it doesn't isolate the cause.
 
 ## Explorer indexes live in the consensus path
 
@@ -41,6 +46,7 @@ to the worst case.
 
 A consensus coin store whose per-block cost stays roughly flat as the chain
 grows, that's friendly to spinning disks and small RAM, and that carries no
-explorer baggage in the consensus path. The evidence that a RocksDB-backed
-store gets there is in [Benchmarks](benchmarks.md); the design is in
-[Target design](target.md).
+explorer baggage in the consensus path. [Benchmarks](benchmarks.md) shows
+a RocksDB-backed store is 7-8x faster over a full replay on an NVMe-backed
+VM. It hasn't been measured on a real spinning disk or with small RAM yet.
+The design is in [Target design](target.md).

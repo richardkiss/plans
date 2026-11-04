@@ -12,24 +12,12 @@ past `Blockchain` to call `BlockHeightMap` directly), classified by
 sync/async and by maximum lookback depth below the validation frontier.
 Verified against `main` at `6c193275d` (2026-09-09).
 
-> **Corrections (2026-11-03, independent review).** Re-audit before S13
-> relies on this page.
->
-> - The MMR rebuild isn't only a startup cost. With no usable fork
->   context, `blockchain_mmr.py:86-96` walks every height from
->   `HARD_FORK2_HEIGHT` synchronously, and it's reachable from header
->   validation through the MMR API (`blockchain.py:1109-1116`,
->   `block_header_validation.py:1103-1110`). Newer trees reuse MMR state
->   instead (`blockchain_mmr.py:96-124` on the S9 branch), so re-check
->   against current main before treating it as an upstream bug.
-> - The bound is relative to the *block being validated*. During a deep
->   fork that block can be far below the canonical peak, so a window
->   anchored at the peak can miss it. The window has to follow the
->   validation frontier, or be preloaded for the fork.
-> - `lookup_block_generators` makes one lookup at an arbitrary input
->   block's height (`blockchain.py:1077-1079`). One lookup doesn't mean one
->   block of lookback.
-> - The fast-forward check is at `full_node.py:1737`, not `blockchain.py`.
+> **Status (2026-11-03): partly superseded; re-audit before S13.** The
+> difficulty-adjustment bound below still stands. Three conclusions don't,
+> and they're rewritten in place below: the MMR walk is reachable from
+> header validation, generator lookups go to an arbitrary height, and the
+> bound is relative to the block being validated, not to the peak.
+> Line numbers are against `main` at `6c193275d`.
 
 ## The claim
 
@@ -38,15 +26,23 @@ Verified against `main` at `6c193275d` (2026-09-09).
 > range) from the validation frontier. Everything that reads deeper is
 > already async and can move to snapshot/view reads.
 
-**Verdict: true, with one caveat.** Every call reachable from
-`Blockchain.add_block()` — the only synchronous, validation-critical path
-— resolves a height within `BLOCKS_CACHE_SIZE` of the block being
-validated. The caveat isn't a violation of the claim, it's a gap in it:
-one call site (the MMR rebuild in `Blockchain.create()`) reads the *entire*
-post-HF2 range at startup. It's not on the validation path — it runs once,
-before validation starts — but a 10k-window cache can't serve it either.
-S13 needs to either exempt this path (read the chain index directly,
-bypassing the windowed cache) or note it as a known follow-up.
+**Verdict: not proven as stated.** Difficulty adjustment, the deepest
+*bounded* walk, stays within `BLOCKS_CACHE_SIZE` of the block being
+validated. Two synchronous paths aren't bounded that way:
+
+- The MMR manager walks every height from `HARD_FORK2_HEIGHT` when it has
+  no usable fork context (`blockchain_mmr.py:86-96`). That walk is
+  reachable from header validation (`blockchain.py:1109-1116`,
+  `block_header_validation.py:1103-1110`), not only from startup. Newer
+  trees reuse MMR state instead (`blockchain_mmr.py:96-124` on the S9
+  branch). Re-check current main before calling it an upstream bug.
+- Generator lookup checks the height of whatever block a ref points to
+  (`blockchain.py:1077-1079`), which can be arbitrarily deep.
+
+And the bound is relative to the block being validated. During a deep fork
+that block can be far below the peak, so a window has to follow the
+validation frontier, or be preloaded for the fork, rather than be anchored
+at the peak.
 
 ## Summary table
 
@@ -56,8 +52,8 @@ bypassing the windowed cache) or note it as a known follow-up.
 | `add_block`'s fork-point assert (`blockchain.py:373`) | sync (block validation) | 1 block (always `block.height - 1`) | yes |
 | `_load_chain_from_store` fast-forward check (`full_node.py:1737`) | sync-adjacent (batch validation loop) | 0 (always the block just added) | yes |
 | Backtrack short-sync fork search (`full_node.py:822`) | async, but self-bounded | ≤ 5 blocks (`while curr_height > peak_height - 5`) | yes |
-| `lookup_block_generators` main-chain check (`blockchain.py:1079`) | sync (generator resolution during validation) | 1 (peak-membership check only; deep pre-HF2 refs use a different, non-audited fork-walk path — see [Target design](target.md) and S14) | yes |
-| **`Blockchain.create` → MMR rebuild** (`blockchain.py:193`, `blockchain_mmr.py:90-94`) | one-time startup, not validation | **unbounded** — full range from `HARD_FORK2_HEIGHT` to peak | **no — needs a direct chain-index read, not the windowed cache** |
+| `lookup_block_generators` main-chain check (`blockchain.py:1077-1079`) | sync (generator resolution during validation) | **unbounded**: one lookup, at the ref'd block's height, which can be any depth | **no** — needs a direct chain-index read |
+| **MMR rebuild** (`Blockchain.create`, `blockchain.py:193`; and from header validation via `blockchain_mmr.py:86-96`) | startup **and** validation | **unbounded** — full range from `HARD_FORK2_HEIGHT` | **no — needs a direct chain-index read or persisted MMR state** |
 | Weight-proof creation (`weight_proof.py:134,214,227,266,331,352,466,497,517`) | async | unbounded — walks from genesis/SES boundaries to peak | no (already the named first consumer of S7's `ChainView`) |
 | RPC handlers (`full_node_rpc_api.py:53,74,235,434,480,576,869,914`) | async | unbounded — client-specified heights | no (candidates for S8) |
 | Peer-protocol handlers (`full_node_api.py:459,463,487,495,513,1412,1469,1476,1491,1560,1574,1671,2081,2127,2162`) | async | unbounded — peer-specified heights, or the hand-rolled reorg re-check idiom | no (the named S8 migration targets) |
@@ -138,11 +134,10 @@ Depth: 1.
 
 ### The batch-validation fast-forward check
 
-`blockchain.py:1737` (reached from `full_node.py`'s batch-validation
-helper) compares `self.blockchain.height_to_hash(block.height) ==
+`full_node.py:1737` (the batch-validation helper) compares `self.blockchain.height_to_hash(block.height) ==
 header_hash` for a block already seen once before, to decide whether it's
 still on the main chain. The guard immediately above it
-(`blockchain.py:1731-1732`, `if block.height <= fork_info.peak_height:
+(`full_node.py:1731-1732`, `if block.height <= fork_info.peak_height:
 continue`) means this only runs for `block.height` strictly past the
 current fork frontier — i.e. it's the block currently at the head of the
 batch being validated, not a historical lookup. Depth: 0 (it's asking
@@ -154,15 +149,15 @@ about the frontier itself, not something below it).
 refs during transaction validation. Its one `height_to_hash` call
 (`blockchain.py:1079`) is a single membership check — "is this
 generator's block still on the main chain?" — not a range walk, so depth
-is 1 lookup at a specific height, not a lookback distance. If the
-generator's block *isn't* on the main chain (a fork), resolution falls
-through to `lookup_fork_chain` (`find_fork_point.py`), which walks
-`block_record`/`prev_hash`, not `height_to_hash` — out of scope here, and
-already the subject of S14's post-HF2 plan (once a ref'd height is more
-than `MAX_REORG_DEPTH` behind HF2_HEIGHT it's reorg-immune and moves to
-the archive; see [Target design](target.md)).
+is 1 lookup at a specific height. That height is wherever the ref points,
+so it can be far outside any window. If the generator's block *isn't* on
+the main chain (a fork), resolution falls through to `lookup_fork_chain`
+(`find_fork_point.py`), which walks `block_record`/`prev_hash`, not
+`height_to_hash`. The lookup stays branch-aware after HF2 (see
+[Target design](target.md#historical-generator-lookup-stays-branch-aware)),
+so S13 routes it to the chain index directly.
 
-## The one gap: startup MMR rebuild
+## The MMR rebuild
 
 `Blockchain.create()` → `_load_chain_from_store()` (`blockchain.py:190-196`)
 loops `for height in range(self.mmr_manager.get_aggrtegate_from(),
@@ -173,19 +168,21 @@ one call site the RPC/peer layer doesn't go through `Blockchain` for — and
 it is genuinely unbounded: as the chain grows past HF2, this range only
 gets longer.
 
-This isn't a counterexample to the claim (it's not on the *validation*
-path — it happens once, before `Blockchain.create()` returns and before
-any block is validated), but it is a real requirement the 10k-window
-design has to account for. Today it works because the full-history
+The same full walk is also reachable from header validation when the MMR
+manager has no fork context (`blockchain_mmr.py:86-96`), so this isn't
+startup-only. On newer trees the startup rebuild also calls
+`coin_store.get_coin_commitments_root(height)` for every post-HF2 height
+(`blockchain.py:190-199` on the S9 branch), which needs each height's
+created and spent coins. That's a dependency on historical coin data, too
+([Target design](target.md#historical-coin-data-that-consensus-reads)). Today it works because the full-history
 `BlockHeightMap` is loaded from disk before this loop runs
 (`block_height_map.py:87-134`). After S13, the windowed cache won't have
 this range in RAM. Two ways out, both cheap: read the chain index
 directly for this one startup walk (S9/S10 already put a `height →
 header_hash` table in the DB, so this is a straight range scan, not a
-per-height point query), or persist/cache the MMR root across restarts so
-the rebuild isn't needed at all. Either is a small, separate fix; flagging
-it here so it doesn't get discovered the hard way during S13's
-implementation.
+per-height point query), or persist the MMR's nodes and frontier, not just
+its root (a root alone can't support append, pop or proofs). This has to be
+designed before S13, not discovered during it.
 
 ## Async call sites — deep by design, already the S7/S8 targets
 
@@ -278,19 +275,18 @@ alongside S8's other migrations costs nothing extra.
 
 ## Conclusion
 
-The claim holds for the path that matters: **every call reachable from
-`Blockchain.add_block()` resolves a height within `BLOCKS_CACHE_SIZE`
-(5,120, with the difficulty-adjustment walk's proven worst case at 4,737)
-of the block being validated.** A 10k-height window gives that walk
-essentially 2x headroom over its proven bound, which is comfortable margin
-for a constant that's derived from `EPOCH_BLOCKS`, not likely to move.
+Difficulty adjustment, the deepest bounded walk, stays within
+`BLOCKS_CACHE_SIZE` (5,120, proven worst case 4,737) of the block being
+validated. A 10k window gives it about 2x headroom, measured from the
+validation frontier, not the peak. The claim doesn't hold for the MMR walk
+or generator lookups. Both need direct chain-index reads (or persisted MMR
+state) in S13.
 
 Two things aren't covered by "the claim is true" and need to be carried
 into S13's implementation, not just its acceptance criteria:
 
-1. The startup MMR rebuild (`blockchain.py:193`) needs a chain-index read
-   that isn't limited to the window — it's not validation-path, but it is
-   real, and it's unbounded today.
+1. The MMR walk (startup and header validation) and generator lookups
+   need reads that aren't limited to the window.
 2. The post-reorg fork lookup (`full_node.py:2076`) uses actual (not
    speculative) reorg depth, which mainnet history says is shallow but
    which no constant enforces yet. Either give the window the same margin

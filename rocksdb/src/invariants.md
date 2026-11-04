@@ -48,10 +48,12 @@ So the invariant the shared transaction protects is exactly one: **the coin
 set, the `in_main_chain` flags, and the peak pointer move together or not at
 all.** Nothing else in the node spans stores in a write transaction.
 
-"Together" is more than per-block. *(Added 2026-11-03.)* The one transaction
-in `_reconsider_peak` covers:
+"Together" is more than per-block. *(Added 2026-11-03; line numbers in this
+paragraph are against main at `6c193275d`.)* The one transaction, opened in
+`add_block` (`blockchain.py:442`) and continued by `_reconsider_peak`
+(`:504`), covers:
 
-- the new block's blob insert (`add_full_block`, `blockchain.py:438`);
+- the new block's blob insert (`add_full_block`, `:444`);
 - the coin rewind to the fork point;
 - every replacement block's coin changes, in order. Blocks without
   transactions skip the coin call entirely (`:539`, `:570-603`);
@@ -104,25 +106,31 @@ once its callers move over.
 
 The one protected invariant is coin set + chain flags + peak. That is
 precisely the state the [target design](target.md) fuses into the consensus
-store: peak and the chain index (today the `in_main_chain` flags, eventually
-an explicit `height → header_hash` map) move into the coin store's write
-scope, so `new_block` and `rollback_to_block` update coins, chain index, and
-peak in one single-store write. The block blob write moves ahead of the
-consensus commit. A process crash in between leaves an orphaned blob, which
+store, in two steps:
+
+- **S10, on SQLite.** One `apply_transition` call on the consensus store
+  replaces the five store calls `_reconsider_peak` sequences today. Its
+  SQLite implementation still uses the one `DBWrapper2` transaction over
+  the existing tables. That's deliberate: the contract gets an interface
+  and tests before any storage moves. It isn't a facade over three stores.
+  It's the consensus store's own operation, and the archive write isn't
+  part of it.
+- **S15, the physical split.** Coins, undo, chain index and peak live in
+  the RocksDB consensus store, and `apply_transition` is one WriteBatch. The
+  block blob write moves ahead of the consensus commit. A process crash in between leaves an orphaned blob, which
 is harmless. Power loss is different: two independently buffered databases
 don't preserve write order on disk, so the consensus peak can survive while
 the blob it needs doesn't. Either sync the archive write before the
 consensus commit, or check archive coverage on startup and rewind until it
 holds ([Target design](target.md#the-archive-and-recovery)).
 
-After that step there is no cross-store write transaction anywhere in the
-node — not because a wrapper hides it, but because none is needed. The
-atomic unit is the consensus store itself. This is why the design has no
-facade over the three stores: a wrapper that delegates its transactions back
-to `DBWrapper2` keeps the coupling and abstracts nothing, which is the shape
-that failed review twice (#19949, #20566). The simulator's
-`revert_block_height` switches to the same public rewind API instead of
-reaching into two stores.
+After S15 there is no cross-store write transaction anywhere in the node.
+That isn't because a wrapper hides it; none is needed. The atomic unit is
+the consensus store itself. What failed review twice (#19949, #20566) was a
+facade over three stores that handed its transactions back to `DBWrapper2`.
+That kept the coupling and abstracted nothing. S10's operation is narrower:
+one store, one method. The simulator's `revert_block_height` calls the same
+method with an empty branch instead of reaching into two stores.
 
 ## What per-store write scopes actually need
 
@@ -135,7 +143,9 @@ above, the full contract in use is:
   one is open, else be your own. Every store method uses this internally;
   it's how store calls silently become atomic inside `add_block`'s scope.
 
-Nested `writer()` scopes become SAVEPOINTs (`:318`), which would let an
+This is the *SQLite backend's internal* contract. Callers above the stores
+see `apply_transition` and read views, not an ambient transaction. Nested
+`writer()` scopes become SAVEPOINTs (`:318`), which would let an
 inner scope roll back while the outer transaction continues. No node code
 path uses that: no inner scope intentionally fails and continues. So the
 replacement contract for a per-store write ACM is an outer commit scope plus

@@ -98,12 +98,15 @@ layout.
   dual-written with `in_main_chain` in the same transaction. Correct by
   construction, but it has no readers, and on an upgraded node it only
   covers heights from the upgrade on. It ships only together with S11's
-  fill and a consumer. Otherwise it's a fourth copy of the same data.
+  fill, a consumer, and S11's schema gate. Otherwise it's a fourth copy of
+  the same data.
 - **S10. The transition API over the existing tables.**
-  `apply_transition(fork_height, blocks)` on the consensus store: rewind
-  plus every replacement block's coin changes, flags and peak, inside one
-  transaction, with read-your-writes. Blocks without transactions are
-  included. `_reconsider_peak` and the simulator's `revert_block_height`
+  `apply_transition(expected_peak, fork_height, blocks)` on the consensus
+  store: rewind plus every replacement block's coin changes, flags and
+  peak, inside one transaction, with read-your-writes. Blocks without
+  transactions are included. The inputs, the result, the commit point and
+  how RAM state is published are specified in
+  [Target design](target.md#one-atomic-transition-not-one-write-per-block). `_reconsider_peak` and the simulator's `revert_block_height`
   both call it, so no caller above the stores sequences five store calls
   inside a transaction any more. Payoff: the contract becomes an interface
   with tests (exceptions, cancellation, a branch that depends on its own
@@ -115,9 +118,11 @@ layout.
   faster startup. If neither is happening, skip this step: S15 builds the
   chain index during conversion. If it happens:
   - *Fill* existing history by copying `in_main_chain` rows in height
-    batches from one snapshot. Check continuity in memory with `prev_hash`,
-    the way BlockHeightMap already loads windows
-    (`block_height_map.py:190-235`). The flags are the source because they
+    batches, one snapshot per batch. Check continuity in memory with
+    `prev_hash`, including across batch boundaries, the way BlockHeightMap
+    already loads windows (`block_height_map.py:190-235`). Commit each batch
+    with the low-water mark, rechecking `low` at commit time
+    ([Migrations](migration.md#s11-filling-the-chain-index-in-the-node)). The flags are the source because they
     commit atomically with the peak and the coins. The `height-to-hash` file
     is a lazily flushed cache, and startup only checks it back to the
     nearest sub-epoch summary, so damage further back can survive. It can
@@ -129,8 +134,11 @@ layout.
     counts, and `chia db validate` (`block_store.py:316-598`,
     `db_validate_func.py:149-170`).
   - *Retire* the `height-to-hash` file, and stop writing `in_main_chain`.
-    Older binaries can't read that database correctly any more, so it's a
-    schema-gated, one-way step, not a reversible dual-write.
+  - *Downgrade policy.* S9 and S11 ship in the same release, behind one
+    schema version bump that older binaries refuse to open. A binary that
+    ignores `chain_index` would otherwise leave it stale while later code
+    trusts it. That makes the release one-way, so it carries the same
+    "back up first" note as `chia db upgrade`.
 - **S12.** `DBWrapper2` becomes store-internal. This is a consequence of
   S10, not its own project: nothing above the stores opens transactions
   any more.
@@ -140,12 +148,13 @@ layout.
   corrections (the MMR's full-history walk is reachable from header
   validation, and a bound relative to the block being validated isn't a
   bound relative to the peak during a deep fork). Decide
-  `BlockchainMMRManager`'s persistence in the same PR.
+  `BlockchainMMRManager`'s persistence (nodes and frontier on disk) in the
+  same PR.
 
 *Acceptance (per rung):* crash and cancellation tests at reorg boundaries;
 peak, chain index and coin set never disagree.
-*Rollback:* S9, S10 and S12 revert cleanly. S11's flag retirement is
-one-way and gated.
+*Rollback:* S10 and S12 revert cleanly. The S9 + S11 release is one-way,
+behind its schema gate.
 
 ## Stage 4 — backends
 
@@ -173,16 +182,21 @@ consensus store doesn't need the fork.
     way back.
 
   Config-selected; SQLite stays the default at first.
-  [Migrations](migration.md) has the conversion design.
+  [Migrations](migration.md) has the conversion design. What serves
+  puzzle-hash queries and singleton lineage on a RocksDB node is
+  [open question B](target.md#explorer-queries-move-out): ship S16 with
+  S15, or make S15 a restricted validator mode until S16 lands.
 - **S16. ExplorerStore.** Puzzle-hash and parent indexes and hints move to
   a separate, deletable database with its own published peak and a rebuild
   path from the archive. Singleton lineage gets a home here or in the
-  mempool. This must land before S17 removes spent history from the
-  default node.
+  mempool. It needs a catch-up and reorg-replay contract, and a way for
+  consumers that need an exact peak to wait or get a "behind" answer.
 - **S17. Lean mode.** Spent coins are deleted, with full records kept in
   the undo log. Gated on the fork-relative read
   ([Target design](target.md#fork-validation-needs-historical-coin-state))
-  being built and tested. Undo pruning is gated separately, on defined and
+  being built and tested, and on every per-height history reader in
+  consensus (the MMR rebuild, header filters) being routed
+  ([Target design](target.md#historical-coin-data-that-consensus-reads)). Undo pruning is gated separately, on defined and
   exercised behavior for a reorg deeper than the retained window.
 
 *Acceptance:* full mainnet sync on the new backend; fsck passes; reorg and

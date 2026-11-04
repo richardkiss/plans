@@ -19,27 +19,47 @@ aside". A framework for one background job is premature.)*
 The default is the shape `chia db upgrade` already has: stop the node,
 convert, validate, switch.
 
-- **Source:** one read snapshot of the SQLite database. Record its identity
-  (network id, peak height and hash, schema version) in the destination
-  before writing anything.
+- **Source:** one read snapshot of the SQLite database, with the node
+  stopped and the converter holding the file exclusively (a lock file the
+  node also checks), so nothing writes to it during conversion. Record its
+  identity (network id, peak height and hash, schema version) in the
+  destination before writing anything.
 - **Streams:** creations ordered by `confirmed_index` and removals ordered
   by `spent_index`. Undo records and per-height aggregates need input
-  grouped by height, so the sort is required. Every height gets a
+  grouped by height, so the sort is required. S15 keeps spent coins, so
+  *every* coin record is copied, with its spent height. Every height gets a
   chain-index key and an undo record, including blocks without
-  transactions. The spike's `merge_blocks` emits only heights with coin
+  transactions. That's full undo coverage, the same as the spike's `rocks`
+  backend. Retention and pruning come with S17. The spike's `merge_blocks` emits only heights with coin
   changes and synthesizes hashes, so it isn't the converter yet.
-- **Resume:** progress is stored in the destination with the source
-  identity next to it. A restart checks that both match, and starts over
-  if they don't. Resuming because an undo key exists isn't enough.
+- **Resume:** each batch's progress marker is written in the same
+  WriteBatch as the data it covers, so they can't disagree after a crash.
+  A restart checks the source identity against the destination's, and
+  starts over if it doesn't match. Resuming because an undo key exists
+  isn't enough.
 - **Validate before switching:** coin counts and spot checks, a
   chain-index entry for every height that chains by `prev_hash` up to the
-  recorded peak, undo coverage for the retained window, and an archive blob
-  for every height.
-- **Switch:** a durable backend-selection manifest, written last. Until it
-  exists the node keeps using SQLite.
-- **Keep the SQLite file** as a named checkpoint. Switching back means
-  pointing the manifest at it and replaying forward from its peak. It isn't
-  a current alternate backend, it's an old copy.
+  recorded peak, an undo record for every height, and an archive blob and
+  block record for every height.
+- **Switch:** flush and sync the destination, then write a
+  backend-selection manifest (write a temp file, fsync it, rename it over
+  the old one). Until the manifest names RocksDB, the node uses SQLite. The
+  exclusive lock is released only after that.
+- **Keep the old SQLite consensus state** as a named checkpoint. It isn't
+  a current alternate backend, it's an old copy, and switching back means
+  bringing it forward from its peak.
+
+> **Open question C (Richard to decide): checkpoint layout.** The archive
+> (`full_blocks`) stays in SQLite and keeps growing, and today it lives in
+> the same file as the coin tables.
+> 1. *Same file, coin tables frozen.* No extra disk. But the old code
+>    can't simply replay: its `add_block` returns `ALREADY_HAVE_BLOCK` for
+>    blocks already archived, and old flag-based readers would see stale
+>    `in_main_chain` flags. Rolling back needs a tool that replays
+>    archived blocks into the frozen coin tables.
+> 2. *Separate files.* Split the archive into its own file at conversion
+>    time. Clean rollback (the old file is intact), but the split costs a
+>    copy of the archive, and preflight has to count it.
 
 **Disk:** budget the whole existing SQLite file, plus the destination,
 plus SQLite's WAL, plus RocksDB's compaction and build workspace. The
@@ -51,27 +71,31 @@ tables. Freed pages in a SQLite file never come back without a rewrite
 the space goes, not how much is needed. Preflight checks this before
 starting.
 
-Also worth measuring: building the coin state directly (unspent coins plus
-the undo records for the retained window), against replaying every
-historical coin operation. The direct build is likely much cheaper.
+Also worth measuring: this direct build from the two sorted streams,
+against replaying every historical coin operation. The direct build is
+likely much cheaper. (A lean S17 conversion would copy only unspent coins
+plus the undo records for its retained window. That's a later step.)
 
 ## S11: filling the chain index in the node
 
 This applies only if S11 ships. The data already exists: every
 `full_blocks` row has `height` and `in_main_chain`.
 
-- Copy `in_main_chain` rows into `chain_index` in height batches, from one
+- Copy `in_main_chain` rows into `chain_index` in height batches, one
   snapshot per batch. Check one row per height and `prev_hash` continuity
-  in memory, the way BlockHeightMap loads windows today.
+  in memory, the way BlockHeightMap loads windows today. Continuity also
+  holds across batches: each batch's top row's hash is the `prev_hash` of
+  the row at `low`.
 - Keep a low-water mark `low` (rows exist for every height in
-  `[low, peak]`) in the same transaction as each batch. A rollback that
+  `[low, peak]`) and commit it in the same transaction as each batch. At
+  commit, re-read `low`. If it changed, discard the batch. A rollback that
   deletes rows below `low` lowers it to fork height + 1 in the same
   transaction.
 - Make completion visible (a log line and `chia db validate`) before any
   reader trusts the table.
-- Mark the database so that a binary which ignores `chain_index` can't
-  open it and later hand back a stale table. A one-way schema gate is
-  simplest.
+- S9 and S11 ship behind one schema version bump that older binaries
+  refuse to open, so a binary that ignores `chain_index` can't leave it
+  stale ([Pathway](pathway.md), S11).
 
 A prototype of the `low` bookkeeping exists (commit `538677bcd6` on
 `store-split-s9-5-chain-index-fill`, not pushed). It walks `prev_hash` one
@@ -112,7 +136,8 @@ SQLite in the background. This is unsafe as written:
 | S9 | `chain_index` table (DDL) | inline at open |
 | S10 | nothing (interface only) | n/a |
 | S11 | chain index fill; flag retirement | batched copy in the node; one-way schema gate |
-| S12-S14 | nothing on disk | n/a |
+| S12, S14 | nothing on disk | n/a |
+| S13 | MMR nodes and frontier persisted (if chosen) | written by the node, rebuildable |
 | S15 | RocksDB backend | offline, resumable, validated, manifest switch |
 | S16 | ExplorerStore | rebuild from archive (deletable) |
 | S17 | lean mode / undo window | in place, after fork-relative reads ship |

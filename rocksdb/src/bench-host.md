@@ -1,3 +1,5 @@
+**[agent draft — I haven't reviewed this text yet]**
+
 # Benchmark hosts
 
 Every result on the [Benchmarks](benchmarks.md) page names the host it ran
@@ -27,9 +29,10 @@ Notes for cross-machine comparison:
   LSM divergence should be larger on a real spinning disk, where scattered
   point reads pay full seek cost. Until a real-HDD run exists, the
   spinning-disk story is extrapolation.
-- 15 GB RAM means the replayed databases (3–8 GB) partially fit in page
-  cache — see the caveats on the [Benchmarks](benchmarks.md) page. A
-  smaller-RAM host would likely *widen* the SQLite/RocksDB gap.
+- 15 GB RAM against full-history databases of 54–100 GB, so the runs
+  include real cache misses. (The early 1M-height runs were 3–8 GB and
+  mostly fit in page cache.) A smaller-RAM host would likely *widen* the
+  SQLite/RocksDB gap.
 - Virtualization adds I/O overhead, but it applies equally to all four
   backends.
 

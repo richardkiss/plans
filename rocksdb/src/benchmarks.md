@@ -18,8 +18,10 @@ grows.
 2. **Replay.** Each backend implements the same minimal API
    (`process_spends` / `rewind_to_block` / `get_coin_records` / `peak`).
    Replay applies each block: multi-get the removals first (as real
-   validation does), then apply creations, spends, undo record, and peak in
-   one batch. Write-only replay would flatter both engines and miss the
+   validation does), then apply creations, spends, undo record, and peak.
+   The RocksDB backends do that in one batch. The SQLite backend commits
+   the coins first and the undo record and peak afterward (see
+   [caveats](#caveats-found-in-review)). Write-only replay would flatter both engines and miss the
    index-read costs, so reads are in the loop on purpose.
 3. **Measure.** Wall time, blocks/sec, and on-disk size logged every 10k
    heights.
@@ -211,15 +213,19 @@ Read these before quoting the numbers.
   CLVM execution. This isolates the coin-store cost; it does *not* predict
   end-to-end sync speedup.
 - **Neither engine fsyncs per block, on purpose.** RocksDB runs its
-  default WAL with sync=false; SQLite runs WAL + synchronous=NORMAL. The
-  comparison is fair, and for the target design no-fsync is correct by
-  construction: the peak update rides in the same atomic WriteBatch as
-  the coins, so the peak key *is* the commit record, and a crash recovers
-  to a clean "as of height H" state (see [Target design](target.md)). No
+  default WAL with sync=false; SQLite runs WAL + synchronous=NORMAL, a
+  comparable posture. For the RocksDB design, no-fsync recovers the
+  consensus store to a clean "as of height H" state, because the peak key
+  rides in the same WriteBatch as the coins. The full node also needs the
+  archive recovery in [Target design](target.md#the-archive-and-recovery).
+  The SQLite backend's split commit means its numbers aren't measured at
+  the same transaction boundary. No
   strict-durability variant was measured; it isn't the design point.
 - **The DBs are much bigger than RAM** (54–100 GB vs 15 GB), so the
   numbers include real cache-miss behavior. There's no measurement on a
   badly RAM-starved box (say, a 2 GB cgroup); I'd expect that to hurt
   SQLite more.
-- **Rewind under replay was not exercised** in the timed runs; rollback
-  correctness is covered by unit tests only.
+- **Rewind under replay was not exercised** in the timed runs, and the
+  unit tests miss the lean ephemeral-coin bug above. Rewind correctness
+  isn't established yet. The corrected harness hasn't been rerun, so the
+  numbers on this page are from the code as reviewed.
