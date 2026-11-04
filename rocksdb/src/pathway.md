@@ -111,7 +111,7 @@ database rather than inline in a transaction — see
   synchronous caller says the bound is safe — the deepest look-back on a
   sync path is provably ≤ 5,121 blocks below the block being validated;
   everything that reads deeper is already async and moves to
-  snapshot/view reads. (The audit will get its own page.)
+  snapshot/view reads. ([The audit has its own page](blockheightmap-audit.md).)
 
 *Acceptance (per rung):* crash-consistency at reorg boundaries; peak, chain
 index, and coin set can never disagree.
