@@ -104,9 +104,11 @@ layout.
   `apply_transition(expected_peak, fork_height, blocks)` on the consensus
   store: rewind plus every replacement block's coin changes, flags and
   peak, inside one transaction, with read-your-writes. Blocks without
-  transactions are included. The inputs, the result, the commit point and
-  how RAM state is published are specified in
-  [Target design](target.md#one-atomic-transition-not-one-write-per-block). `_reconsider_peak` and the simulator's `revert_block_height`
+  transactions are included. No schema change: it maps onto today's
+  `coin_record`, flags and `current_peak`, and the block-blob write stays
+  in the same SQLite transaction. The types, checks, commit point, how RAM
+  state is published, cancellation and tests are on
+  [S10 transition contract](s10-contract.md). `_reconsider_peak` and the simulator's `revert_block_height`
   both call it, so no caller above the stores sequences five store calls
   inside a transaction any more. Payoff: the contract becomes an interface
   with tests (exceptions, cancellation, a branch that depends on its own
@@ -139,9 +141,11 @@ layout.
     ignores `chain_index` would otherwise leave it stale while later code
     trusts it. That makes the release one-way, so it carries the same
     "back up first" note as `chia db upgrade`.
-- **S12.** `DBWrapper2` becomes store-internal. This is a consequence of
-  S10, not its own project: nothing above the stores opens transactions
-  any more.
+- **S12.** `DBWrapper2` becomes store-internal. After S10, `add_block`
+  still opens the outer transaction so the blob write and the transition
+  commit together. That goes away when S15 separates the archive write
+  (with its retry path), so S12 lands with S15. It's a consequence, not its
+  own project.
 - **S13.** `BlockHeightMap` becomes a bounded cache (~10k heights). This is
   memory work, and it can be done on its own once S11 and Stage 2's async
   views exist. Re-audit first: the [audit](blockheightmap-audit.md) has

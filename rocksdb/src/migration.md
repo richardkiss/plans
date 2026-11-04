@@ -29,8 +29,10 @@ convert, validate, switch.
   grouped by height, so the sort is required. S15 keeps spent coins, so
   *every* coin record is copied, with its spent height. Every height gets a
   chain-index key and an undo record, including blocks without
-  transactions. That's full undo coverage, the same as the spike's `rocks`
-  backend. Retention and pruning come with S17. The spike's `merge_blocks` emits only heights with coin
+  transactions. That's full undo coverage. (The spike's `rocks` backend
+  writes undo for every height it emits, but its `merge_blocks` emits only
+  heights with coin changes, so the converter has to fill in the rest.)
+  Retention and pruning come with S17. The spike's `merge_blocks` emits only heights with coin
   changes and synthesizes hashes, so it isn't the converter yet.
 - **Resume:** each batch's progress marker is written in the same
   WriteBatch as the data it covers, so they can't disagree after a crash.
@@ -42,9 +44,11 @@ convert, validate, switch.
   recorded peak, an undo record for every height, and an archive blob and
   block record for every height.
 - **Switch:** flush and sync the destination, then write a
-  backend-selection manifest (write a temp file, fsync it, rename it over
-  the old one). Until the manifest names RocksDB, the node uses SQLite. The
-  exclusive lock is released only after that.
+  backend-selection manifest durably: write a temp file, fsync it, rename it
+  over the old one, then fsync the parent directory (on Windows, use a
+  replace call that guarantees durability). Until the manifest names
+  RocksDB, the node uses SQLite. The exclusive lock is released, and
+  success reported, only after that. Crash tests cover each step.
 - **Keep the old SQLite consensus state** as a named checkpoint. It isn't
   a current alternate backend, it's an old copy, and switching back means
   bringing it forward from its peak.
@@ -52,14 +56,22 @@ convert, validate, switch.
 > **Open question C (Richard to decide): checkpoint layout.** The archive
 > (`full_blocks`) stays in SQLite and keeps growing, and today it lives in
 > the same file as the coin tables.
-> 1. *Same file, coin tables frozen.* No extra disk. But the old code
->    can't simply replay: its `add_block` returns `ALREADY_HAVE_BLOCK` for
->    blocks already archived, and old flag-based readers would see stale
->    `in_main_chain` flags. Rolling back needs a tool that replays
->    archived blocks into the frozen coin tables.
-> 2. *Separate files.* Split the archive into its own file at conversion
->    time. Clean rollback (the old file is intact), but the split costs a
->    copy of the archive, and preflight has to count it.
+> 1. *Same file, coin tables frozen.* No second copy of the archive
+>    (growth, WAL and workspace still count). Old flag-based readers would
+>    see stale `in_main_chain` flags, so the old binary must refuse this
+>    file until a rollback tool has run.
+> 2. *Separate files.* Split the archive (blocks, block records,
+>    sub-epoch segments, hints) into its own file at conversion time. The
+>    old file stays intact, but that's a copy of all of it, and preflight
+>    has to count it.
+>
+> Neither gives rollback by itself. Either way, going back needs a
+> branch-aware replay tool. The chain may have reorged below the
+> checkpoint since, so it first rewinds the checkpoint to the common
+> ancestor and then applies the canonical blocks from there. It can't go
+> through `add_block`: blocks already in the archive (including orphans)
+> return `ALREADY_HAVE_BLOCK`. It also has to say how block records move
+> back and which schema version the result carries.
 
 **Disk:** budget the whole existing SQLite file, plus the destination,
 plus SQLite's WAL, plus RocksDB's compaction and build workspace. The
@@ -134,7 +146,7 @@ SQLite in the background. This is unsafe as written:
 | Step | What migrates | How |
 |---|---|---|
 | S9 | `chain_index` table (DDL) | inline at open |
-| S10 | nothing (interface only) | n/a |
+| S10 | nothing: same tables, same transaction ([contract](s10-contract.md)) | n/a |
 | S11 | chain index fill; flag retirement | batched copy in the node; one-way schema gate |
 | S12, S14 | nothing on disk | n/a |
 | S13 | MMR nodes and frontier persisted (if chosen) | written by the node, rebuildable |

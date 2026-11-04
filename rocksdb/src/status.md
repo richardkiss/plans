@@ -17,8 +17,15 @@ Living page. Dated entries, newest first.
 - [Target](target.md), [invariants](invariants.md),
   [pathway](pathway.md), [migrations](migration.md) and
   [benchmarks](benchmarks.md) were revised after an independent review.
-  The [audit](blockheightmap-audit.md) has corrections at the top. The
+  The [audit](blockheightmap-audit.md) verdict was rewritten. The
   [decision log](decisions.md) has the summary.
+- New page: the [S10 transition contract](s10-contract.md), written so S10
+  can be implemented and reviewed against it.
+- Three questions are open for me: archive durability (A,
+  [target](target.md#the-archive-and-recovery)), what serves explorer
+  queries on a RocksDB node (B,
+  [target](target.md#explorer-queries-move-out)), and the SQLite
+  checkpoint layout (C, [migrations](migration.md)).
 
 ## 2026-09-16 — Renewed priority; Stage 2's first PR lands; two old stale PRs closed
 

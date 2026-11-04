@@ -31,8 +31,8 @@ deletes them (`rocks-lean`) is a later step, gated on fork validation, below.
   of it.
 - **Peak**: `p` → `(height, header_hash)`, the commit record for the whole
   store.
-- **Metadata**: schema version, network id, lean/full flag, earliest
-  retained undo height.
+- **Metadata**: schema version, network id, lean/full flag, and the undo
+  floor `U`: the lowest height that still has an undo record.
 
 Sub-epoch summaries are sparse and come from block records. They stay
 available through the archive by hash, or through a small sparse index
@@ -46,24 +46,14 @@ transactions skip the coin call entirely), the `in_main_chain` updates and
 the peak (`blockchain.py:442-447`, `:539`, `:570-624`). The target keeps
 that unit. It doesn't split it per block:
 
-- `apply_transition(expected_peak, fork_height, blocks) -> TransitionResult`:
-  - `expected_peak` is the `(height, header_hash)` the caller validated
-    against. The call fails, writing nothing, if the store's peak differs.
-    Callers also hold the blockchain's priority mutex, as today.
-  - `fork_height` is the height to rewind to, with `-1` for "before genesis",
-    the sentinel `ForkInfo` uses today.
-  - `blocks` is the replacement branch in height order. Each entry is a
-    validated change set, the data `_reconsider_peak` builds from `ForkInfo`
-    today (`blockchain.py:570-603`): header hash, height, prev hash,
-    timestamp, whether it's a transaction block, reward coins, other
-    additions (with `same_as_parent`), and removal IDs. The store checks
-    that each entry's prev hash is the hash at the height below it.
-  - The simulator's rewind passes an empty `blocks` list.
-  - `TransitionResult` carries what `StateChangeSummary` needs downstream:
-    the rolled-back coin records and the new coin records.
-  - Everything goes in **one** WriteBatch: coins, undo records, a
-    chain-index entry for every height (including blocks without
-    transactions), and the final peak.
+- `apply_transition(expected_peak, fork_height, blocks) -> TransitionResult`
+  is the one operation. Its types, checks, the commit point, how RAM state
+  is published and what happens on cancellation are on
+  [S10 transition contract](s10-contract.md). S10 implements it over
+  today's SQLite tables. The RocksDB backend (S15) implements the same
+  contract as **one** WriteBatch: coins, undo records, a chain-index entry
+  for every height (including blocks without transactions), and the final
+  peak.
 - Reads inside the transition see its own earlier writes. A coin created in
   block 101 of the replacement branch and spent in 102 has to be found, and
   so does a coin the rewind just resurrected. RocksDB's plain `get` doesn't
@@ -71,18 +61,8 @@ that unit. It doesn't split it per block:
   in-memory overlay. SQLite gets this for free today because
   `reader_no_transaction()` routes the writer task's reads to the write
   connection (`db_wrapper.py:482-493`).
-- **Commit point.** Writing the batch is the linearization point. A
-  failure or cancellation *before* it leaves the store unchanged. The write
-  itself is shielded from cancellation, the same way `DBWrapper2` shields
-  its rollback and release today (`db_wrapper.py:340-355`). A caller
-  cancelled *after* the commit gets a committed transition, not an abort.
-  If the outcome is unknown (an I/O error mid-write), reopen and read the
-  peak before retrying.
-- **Publication.** After commit, the in-RAM state is updated with no
-  awaits in between, as `blockchain.py:449-486` does today: peak height,
-  the height map and SES cache, and the MMR. If publication fails, they're
-  reloaded from the store. Tests cover cancellation before commit, during
-  commit, and after commit before the result is delivered.
+- In the RocksDB backend, the commit point is the `db.write(batch)` call,
+  with the same cancellation and publication rules as the contract page.
 
 Durability is unchanged from the spike's posture: the peak key is the commit
 record, so there's no per-block fsync. Power loss drops an unsynced WAL tail
@@ -120,13 +100,16 @@ already carries, exactly as it does today.
   `block_body_validation.py:491-531` already makes the same
   created-before/after-fork distinction. The rule moves into the view, and
   the validator keeps its `ForkInfo` logic.
-- **History unavailable.** If the fork point is below the retained undo
-  floor, the view returns a distinct "history unavailable" result, never
+- **History unavailable.** A fork at height F needs undo records
+  `b<F+1> … b<peak>`, so the earliest fork the view can reconstruct is
+  `U - 1`. For `F < U - 1` the view returns a distinct "history unavailable" result, never
   "coin missing". The floor is published durably in the metadata, and
   pruning never goes past a floor that an open view is using.
 - **Cost.** Scanning every undo record between fork and peak on each
   validation isn't obviously cheap. Build the reversal set once per fork,
-  next to `ForkInfo`, and extend it as the peak moves. Measure it on the
+  next to `ForkInfo`, and extend it as the peak moves forward. If the
+canonical chain itself reorgs, the set is thrown away and rebuilt, since
+extending only works while the ancestry is unchanged. Measure it on the
   spike with real reorgs before calling it cheap.
 
 That makes "undo records hold full coin records" a hard format requirement,
@@ -149,10 +132,18 @@ Explorer queries aren't the only readers of past coin state. On newer main
   (`blockchain.py:979-991`).
 
 So lean mode has to keep per-height history answerable for consensus, not
-only for the ExplorerStore. Within the retained window, the undo records
-answer these. Beyond it, either persist the MMR state (nodes and frontier)
-plus each height's commitment root, or rebuild from the archive at a
-measured cost. Every height-history caller is routed before S17.
+only for the ExplorerStore. These APIs return records as they are *now*,
+with current spent status, the same as today's SQL. Within the retained
+window, the undo records answer them. Beyond it, there are two callers
+with different needs:
+
+- **MMR rebuild:** persist the MMR state (nodes and frontier) plus each
+  height's commitment root. The roots are all it needs.
+- **Header filters for old heights:** a root can't supply the coins. They
+  need their own source: a persisted filter cache, or re-executing
+  archived blocks on request at a measured cost.
+
+Every height-history caller is routed before S17.
 
 ## The archive and recovery
 
@@ -163,14 +154,20 @@ leave a durable peak whose block blob or block record was lost.
 
 > **Open question A (Richard to decide): how the archive stays ahead of
 > consensus.**
-> 1. *Sync the archive write before the consensus commit.* Simple, but it
->    costs one fsync per block on the archive.
-> 2. *Coverage checkpoint.* Record a durable, hash-identified archive
->    checkpoint (a peak hash, not a height, since a replacement branch can
->    add dependencies below a previously synced height). On startup, before
->    any cache loads, rewind consensus until every block and block record
->    it references is in the archive. Undo retention has to reach back to
->    that checkpoint.
+> 1. *Make the archive durable before publishing the transition that
+>    depends on it.* This can be batched: during sync, archive a whole
+>    batch of blocks, sync once, then commit their transitions. At the tip
+>    it's one archive sync per block.
+> 2. *Coverage checkpoint.* Durably record a peak hash whose ancestry is
+>    fully in the archive (blocks and block records). On startup, before
+>    any cache loads, rewind consensus to a covered ancestor. A peak hash
+>    alone doesn't give the retention rule: if the checkpoint is at 100 and
+>    a replacement branch forks at 80, the new branch's blocks from 81 up
+>    may not be archived yet. So undo has to be retained back to the
+>    common ancestor of the checkpoint and any branch that can be
+>    published, or a replacement branch's archive coverage has to be made
+>    durable before its transition commits (which is option 1 for
+>    reorgs).
 
 Either way, after a rewind the archive can still hold blocks above the
 recovered peak. `add_block` returns `ALREADY_HAVE_BLOCK` for a record that's
@@ -207,12 +204,20 @@ RocksDB store keyed only by coin ID can't answer them.
 > **Open question B (Richard to decide): what serves these queries when
 > S15 switches a node to RocksDB.**
 > 1. *Ship S16 with S15*, so a RocksDB node is a full node from day one.
-> 2. *S15 is a restricted validator mode*, with no wallet RPCs and no fast
->    forward, until S16 lands.
+> 2. *Temporary compatibility indexes in the S15 backend* (puzzle hash,
+>    parent, lineage), kept in the consensus WriteBatch and retired when
+>    S16 lands. It costs write amplification in the consensus path for a
+>    while.
+> 3. *S15 is a restricted validator mode* until S16 lands: no wallet RPCs,
+>    no wallet-protocol subscriptions, and fast forward explicitly turned
+>    off (the mempool rejects a spend that needs it, rather than finding
+>    "no lineage"). A mempool-local lineage index can bring fast forward
+>    back in this mode on its own.
 >
-> Either way, S16 needs a catch-up and reorg-replay contract. Consumers
-> that need an exact peak (like the mempool) have to be able to wait for
-> it or get a clear "behind" answer.
+> Either way, S16 needs a catch-up and reorg-replay contract. A consumer
+> asks for an exact peak *hash*. If the ExplorerStore is behind, the
+> answer says so and names the hash it's at. The mempool then defers the
+> spend until the store catches up, and drops it if that takes too long.
 
 ## Binding: rocksdict
 

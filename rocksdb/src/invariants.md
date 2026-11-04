@@ -113,11 +113,15 @@ store, in two steps:
   SQLite implementation still uses the one `DBWrapper2` transaction over
   the existing tables. That's deliberate: the contract gets an interface
   and tests before any storage moves. It isn't a facade over three stores.
-  It's the consensus store's own operation, and the archive write isn't
-  part of it.
+  It's the consensus store's own operation. In S10 the block-blob write
+  stays in the same SQLite transaction, opened by `add_block`, so a failed
+  transition still rolls back the blob and a retry works as today
+  ([contract](s10-contract.md#scope-sqlite-existing-tables-same-transaction)).
 - **S15, the physical split.** Coins, undo, chain index and peak live in
   the RocksDB consensus store, and `apply_transition` is one WriteBatch. The
-  block blob write moves ahead of the consensus commit. A process crash in between leaves an orphaned blob, which
+  block blob write moves ahead of the consensus commit, and a
+  reconsider path handles blocks that are archived but not applied
+  ([contract](s10-contract.md#retry)). A process crash in between leaves an orphaned blob, which
 is harmless. Power loss is different: two independently buffered databases
 don't preserve write order on disk, so the consensus peak can survive while
 the blob it needs doesn't. Either sync the archive write before the

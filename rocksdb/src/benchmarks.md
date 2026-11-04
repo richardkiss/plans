@@ -33,7 +33,7 @@ blocks, 408.55M coins created, 163.51M spent.
 
 | Backend | Description |
 |---|---|
-| `sqlite-full` | Production schema, all four indexes |
+| `sqlite-full` | The production `coin_record` schema with its four standard indexes (not the conditional lineage index) |
 | `sqlite-consensus` | Same schema minus the explorer indexes (puzzle_hash, coin_parent) |
 | `rocks` | RocksDB; spent coins kept and flagged (db_v3-style schema, peak in the same WriteBatch) |
 | `rocks-lean` | RocksDB; spent coins *deleted*, full spent records preserved in a per-block undo log |
@@ -68,8 +68,11 @@ segments (~40x at height 1M). The gap is biggest in the dust segments
 holds 25–50. In wall-clock terms: full replay is a half-day on RocksDB
 and four days plus on SQLite.
 
-The win is the engine — LSM writes and bloom-filtered reads vs B-tree
-maintenance and scattered page reads — not the schema. Dropping the
+My reading is that the win is mostly the engine — LSM writes and
+bloom-filtered reads vs B-tree maintenance and scattered page reads — not
+the schema. That's an interpretation, not a measured attribution: the
+backends commit at different boundaries, and the corrected harness hasn't
+been rerun. Dropping the
 explorer indexes only bought SQLite ~1.5x in the 1M-capped run, and both
 of those indexes key on effectively random 32-byte hashes, the worst case
 for a B-tree's page cache. That's what justifies an engine migration
