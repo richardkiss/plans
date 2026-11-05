@@ -177,3 +177,14 @@ subscriptions, and the mempool rejects fast-forward spends explicitly. It's
 opt-in, SQLite stays the default, and it gets the speedup into real use
 early. S16 brings the rest back
 ([Target design](target.md#explorer-queries-move-out)).
+
+## 2026-11-05 — Fallback after conversion: same file, frozen and poisoned
+
+After S15's conversion the old SQLite coin data stays as a fallback, in the
+same file as the archive, so no ~200 GB second copy is needed. Conversion
+bumps `database_version` to 3, so old full nodes refuse the file, and
+renames `coin_record` to `coin_record_frozen_<height>`, so tools that skip
+the version check fail loudly instead of reading stale coins. Going back
+uses a branch-aware replay tool. Retiring the fallback drops the table, and
+new blocks reuse the freed pages. VACUUM is off the default path. An
+offline vacuum utility can come later ([Migrations](migration.md)).

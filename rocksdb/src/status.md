@@ -27,8 +27,9 @@ Living page. Dated entries, newest first.
 - Explorer queries on a RocksDB node (B) are decided: S15 is a
   restricted validator mode until S16 lands
   ([target](target.md#explorer-queries-move-out)).
-- One question is open for me: the SQLite checkpoint layout (C,
-  [migrations](migration.md)).
+- The SQLite checkpoint layout (C) is decided: same file,
+  `database_version` bumped to 3, coin table renamed, a replay tool to go
+  back, and no VACUUM by default ([migrations](migration.md)).
 
 ## 2026-09-16 — Renewed priority; Stage 2's first PR lands; two old stale PRs closed
 

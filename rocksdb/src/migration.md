@@ -53,25 +53,37 @@ convert, validate, switch.
   a current alternate backend, it's an old copy, and switching back means
   bringing it forward from its peak.
 
-> **Open question C (Richard to decide): checkpoint layout.** The archive
-> (`full_blocks`) stays in SQLite and keeps growing, and today it lives in
-> the same file as the coin tables.
-> 1. *Same file, coin tables frozen.* No second copy of the archive
->    (growth, WAL and workspace still count). Old flag-based readers would
->    see stale `in_main_chain` flags, so the old binary must refuse this
->    file until a rollback tool has run.
-> 2. *Separate files.* Split the archive (blocks, block records,
->    sub-epoch segments, hints) into its own file at conversion time. The
->    old file stays intact, but that's a copy of all of it, and preflight
->    has to count it.
->
-> Neither gives rollback by itself. Either way, going back needs a
-> branch-aware replay tool. The chain may have reorged below the
-> checkpoint since, so it first rewinds the checkpoint to the common
-> ancestor and then applies the canonical blocks from there. It can't go
-> through `add_block`: blocks already in the archive (including orphans)
-> return `ALREADY_HAVE_BLOCK`. It also has to say how block records move
-> back and which schema version the result carries.
+**Decided 2026-11-05: same file, coin tables frozen.** The archive
+(`full_blocks`) stays in SQLite and keeps growing in the same file as the
+old coin tables. Conversion does three things to that file:
+
+- **Bumps `database_version` to 3 in place.** Old binaries treat anything
+  other than 2 as v1 (`db_version.py:10-20`), so an old full node fails at
+  `BlockStore.create` with "does not support database schema v1" before it
+  touches any coin data (`full_node.py:280-313`). The message is
+  misleading, but the failure is loud. The file keeps its name, so the
+  `database_path` config doesn't change.
+- **Renames `coin_record` to `coin_record_frozen_<height>`.** This is an
+  instant metadata change, and the indexes go with the table. Readers that
+  skip the version check (old `chia db` commands, third-party explorers,
+  ad-hoc `sqlite3`) then get "no such table" instead of silently reading
+  stale coins.
+- **Leaves everything else in place.** There's no second copy of the
+  archive (growth, WAL and workspace still count).
+
+Going back needs a **branch-aware replay tool**. The chain may have
+reorged below the conversion point since, so the tool rewinds the frozen
+coin tables to the common ancestor, then applies the canonical blocks from
+there, and sets the version back to 2. It can't go through `add_block`:
+blocks already in the archive (including orphans) return
+`ALREADY_HAVE_BLOCK`.
+
+**Retiring the fallback** is a separate command that drops the frozen
+table. Its pages go to SQLite's free list, and new block data reuses them,
+so the file stops growing for a long while instead of shrinking. There's
+no VACUUM on the default path: it rewrites the whole ~215 GB file under an
+exclusive lock and needs about that much free space. An offline vacuum
+utility, for operators who want the disk back immediately, can come later.
 
 **Disk:** budget the whole existing SQLite file, plus the destination,
 plus SQLite's WAL, plus RocksDB's compaction and build workspace. The
