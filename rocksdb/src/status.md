@@ -24,10 +24,11 @@ Living page. Dated entries, newest first.
 - Archive durability (A) is decided: repair at startup by walking the
   peak back until the archive has every block, with no extra fsync
   ([target](target.md#the-archive-and-recovery)).
-- Two questions are open for me: what serves explorer
-  queries on a RocksDB node (B,
-  [target](target.md#explorer-queries-move-out)), and the SQLite
-  checkpoint layout (C, [migrations](migration.md)).
+- Explorer queries on a RocksDB node (B) are decided: S15 is a
+  restricted validator mode until S16 lands
+  ([target](target.md#explorer-queries-move-out)).
+- One question is open for me: the SQLite checkpoint layout (C,
+  [migrations](migration.md)).
 
 ## 2026-09-16 — Renewed priority; Stage 2's first PR lands; two old stale PRs closed
 

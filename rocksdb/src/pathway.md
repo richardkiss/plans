@@ -186,10 +186,10 @@ consensus store doesn't need the fork.
     way back.
 
   Config-selected; SQLite stays the default at first.
-  [Migrations](migration.md) has the conversion design. What serves
-  puzzle-hash queries and singleton lineage on a RocksDB node is
-  [open question B](target.md#explorer-queries-move-out): ship S16 with
-  S15, or make S15 a restricted validator mode until S16 lands.
+  [Migrations](migration.md) has the conversion design. Until S16 lands,
+  a RocksDB node is a restricted validator: no wallet RPCs or
+  subscriptions, and fast forward off
+  ([Target design](target.md#explorer-queries-move-out)).
 - **S16. ExplorerStore.** Puzzle-hash and parent indexes and hints move to
   a separate, deletable database with its own published peak and a rebuild
   path from the archive. Singleton lineage gets a home here or in the

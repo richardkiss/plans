@@ -203,23 +203,18 @@ archive. Today these queries run on the same SQLite tables (`coin_store.py:656-6
 joins the spent parent for singleton lineage, and the mempool calls it). A
 RocksDB store keyed only by coin ID can't answer them.
 
-> **Open question B (Richard to decide): what serves these queries when
-> S15 switches a node to RocksDB.**
-> 1. *Ship S16 with S15*, so a RocksDB node is a full node from day one.
-> 2. *Temporary compatibility indexes in the S15 backend* (puzzle hash,
->    parent, lineage), kept in the consensus WriteBatch and retired when
->    S16 lands. It costs write amplification in the consensus path for a
->    while.
-> 3. *S15 is a restricted validator mode* until S16 lands: no wallet RPCs,
->    no wallet-protocol subscriptions, and fast forward explicitly turned
->    off (the mempool rejects a spend that needs it, rather than finding
->    "no lineage"). A mempool-local lineage index can bring fast forward
->    back in this mode on its own.
->
-> Either way, S16 needs a catch-up and reorg-replay contract. A consumer
-> asks for an exact peak *hash*. If the ExplorerStore is behind, the
-> answer says so and names the hash it's at. The mempool then defers the
-> spend until the store catches up, and drops it if that takes too long.
+**Decided 2026-11-05: S15 ships as a restricted validator mode** until
+S16 lands. A RocksDB node validates and follows the chain, but serves no
+wallet RPCs and no wallet-protocol subscriptions, and fast forward is
+explicitly off: the mempool rejects a spend that needs it, rather than
+finding "no lineage". SQLite stays the default, so this mode is opt-in. A
+mempool-local lineage index could bring fast forward back to this mode on
+its own, later.
+
+S16 needs a catch-up and reorg-replay contract. A consumer asks for an
+exact peak *hash*. If the ExplorerStore is behind, the answer says so and
+names the hash it's at. The mempool then defers the spend until the store
+catches up, and drops it if that takes too long.
 
 ## Binding: rocksdict
 
@@ -236,8 +231,8 @@ overlay in Python. Why not revive my own pyo3 binding: see the
   but it isn't append-only through a reorg, so it belongs inside the
   transition too.
 - Singleton fast-forward (`get_unspent_lineage_info_for_puzzle_hash`) is a
-  puzzle-hash query with retained parent ancestry. It needs a home by S15
-  (see open question B): a mempool-local index or the ExplorerStore.
+  puzzle-hash query with retained parent ancestry. In S15's restricted mode
+  it's off. It comes back with S16, or earlier with a mempool-local index.
 - The BlockchainMMRManager needs its own persisted-node design (see
   "Historical coin data" above). Caching only its root can't support
   append, pop or proofs.

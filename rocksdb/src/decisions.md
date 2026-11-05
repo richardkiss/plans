@@ -168,3 +168,12 @@ chain index names, then rewinds to there
 ([Target design](target.md#the-archive-and-recovery)). The opposite case, a
 block archived but not applied, is handled by the reconsider path in the
 [S10 contract](s10-contract.md#retry).
+
+## 2026-11-05 — RocksDB nodes are restricted validators until S16
+
+S15 doesn't wait for the ExplorerStore. A node switched to RocksDB
+validates and follows the chain, but serves no wallet RPCs or wallet
+subscriptions, and the mempool rejects fast-forward spends explicitly. It's
+opt-in, SQLite stays the default, and it gets the speedup into real use
+early. S16 brings the rest back
+([Target design](target.md#explorer-queries-move-out)).
