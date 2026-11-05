@@ -124,9 +124,9 @@ store, in two steps:
   ([contract](s10-contract.md#retry)). A process crash in between leaves an orphaned blob, which
 is harmless. Power loss is different: two independently buffered databases
 don't preserve write order on disk, so the consensus peak can survive while
-the blob it needs doesn't. Either sync the archive write before the
-consensus commit, or check archive coverage on startup and rewind until it
-holds ([Target design](target.md#the-archive-and-recovery)).
+the blob it needs doesn't. Startup handles it: walk the consensus peak
+back until the archive has every block, then rewind to there
+([Target design](target.md#the-archive-and-recovery)).
 
 After S15 there is no cross-store write transaction anywhere in the node.
 That isn't because a wrapper hides it; none is needed. The atomic unit is

@@ -157,3 +157,14 @@ What changed:
   (sync it first, or a coverage checkpoint); and the SQLite checkpoint
   layout (same file frozen, or split files). See
   [Target design](target.md) and [Migrations](migration.md).
+
+## 2026-11-05 — Archive durability: repair at startup
+
+Coins live in RocksDB and blocks in SQLite, and either can lose its newest
+writes on power loss. I'm not adding an fsync before each consensus commit.
+fsync isn't especially reliable, and rewind has to work anyway. Instead,
+startup walks the consensus peak back until the archive has every block the
+chain index names, then rewinds to there
+([Target design](target.md#the-archive-and-recovery)). The opposite case, a
+block archived but not applied, is handled by the reconsider path in the
+[S10 contract](s10-contract.md#retry).

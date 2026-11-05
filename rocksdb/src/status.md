@@ -21,8 +21,10 @@ Living page. Dated entries, newest first.
   [decision log](decisions.md) has the summary.
 - New page: the [S10 transition contract](s10-contract.md), written so S10
   can be implemented and reviewed against it.
-- Three questions are open for me: archive durability (A,
-  [target](target.md#the-archive-and-recovery)), what serves explorer
+- Archive durability (A) is decided: repair at startup by walking the
+  peak back until the archive has every block, with no extra fsync
+  ([target](target.md#the-archive-and-recovery)).
+- Two questions are open for me: what serves explorer
   queries on a RocksDB node (B,
   [target](target.md#explorer-queries-move-out)), and the SQLite
   checkpoint layout (C, [migrations](migration.md)).

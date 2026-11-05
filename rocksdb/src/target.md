@@ -152,22 +152,24 @@ archive are now two databases, and application write order across two
 independently buffered databases is not durable order. Power loss can
 leave a durable peak whose block blob or block record was lost.
 
-> **Open question A (Richard to decide): how the archive stays ahead of
-> consensus.**
-> 1. *Make the archive durable before publishing the transition that
->    depends on it.* This can be batched: during sync, archive a whole
->    batch of blocks, sync once, then commit their transitions. At the tip
->    it's one archive sync per block.
-> 2. *Coverage checkpoint.* Durably record a peak hash whose ancestry is
->    fully in the archive (blocks and block records). On startup, before
->    any cache loads, rewind consensus to a covered ancestor. A peak hash
->    alone doesn't give the retention rule: if the checkpoint is at 100 and
->    a replacement branch forks at 80, the new branch's blocks from 81 up
->    may not be archived yet. So undo has to be retained back to the
->    common ancestor of the checkpoint and any branch that can be
->    published, or a replacement branch's archive coverage has to be made
->    durable before its transition commits (which is option 1 for
->    reorgs).
+**Decided 2026-11-05: repair at startup, no extra fsync.** fsync isn't
+especially reliable anyway, and rewind has to work regardless. On startup,
+before any cache loads:
+
+```
+h = consensus peak height
+while the archive is missing the block (or block record) that the chain index names at h:
+    h -= 1
+rewind consensus to h      # apply_transition with an empty branch, only if h moved
+```
+
+SQLite in WAL mode loses only its newest transactions on power loss, so
+the missing blocks are the most recent ones and the loop is short. It
+follows the consensus store's own chain index, so a reorg is covered too:
+if the peak is on a branch that forked at 80 and the archive lost that
+branch's blocks 81 and up, the loop stops at 80. The undo records for
+those heights were written in the same batch as the heights themselves,
+so they're there. No checkpoint and no retention rule are needed.
 
 Either way, after a rewind the archive can still hold blocks above the
 recovered peak. `add_block` returns `ALREADY_HAVE_BLOCK` for a record that's
