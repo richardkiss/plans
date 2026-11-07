@@ -188,3 +188,14 @@ the version check fail loudly instead of reading stale coins. Going back
 uses a branch-aware replay tool. Retiring the fallback drops the table, and
 new blocks reuse the freed pages. VACUUM is off the default path. An
 offline vacuum utility can come later ([Migrations](migration.md)).
+
+## 2026-11-06 — DBWrapper2 is an implementation detail
+
+`DBWrapper2` should be invisible above the stores, so that we can move
+possibly everything to RocksDB later, archive included, without the higher
+levels noticing. New step S5a: one object owns the database file (open,
+version bootstrap, `DBWrapper2`, store construction), `FullNode` only sees
+stores, and `BlockHeightMap` reads through a `BlockStore` method instead of
+SQL. It owns construction and lifetime, not transactions, so it isn't the
+cross-store transaction facade rejected in #19949/#20566. Transactions stay
+inside store methods (S10, S12) ([Pathway](pathway.md)).

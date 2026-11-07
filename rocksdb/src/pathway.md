@@ -50,6 +50,28 @@ merged 2026-07-27/28.
 
 *Rollback:* pure types and method moves — each reverts independently.
 
+- **S5a — not started (added 2026-11-06).** Hide `DBWrapper2` behind one
+  owner. Today `FullNode` creates the `DBWrapper2`, runs the v1/v2 version
+  bootstrap SQL itself, and hands the wrapper to `BlockStore`, `HintStore`,
+  `CoinStore` and `BlockHeightMap` (`full_node.py:285-342`), and
+  `BlockHeightMap` in `chia.consensus` runs raw SQL on `full_blocks`
+  through it (`block_height_map.py:12, 26, 58, 196-202`). After S5a:
+  - One object in `chia.full_node` owns the database file: it opens it,
+    checks and bootstraps the version, holds the `DBWrapper2`, constructs
+    the stores, and closes it all. `FullNode` gets stores from it and never
+    sees the wrapper. `FullNode.db_wrapper` goes away.
+  - `BlockHeightMap` gets its rows from a `BlockStore` method instead of
+    SQL, so `chia.consensus` stops importing `chia.util.db_wrapper`.
+
+  Why: everything above the stores sees store interfaces only, so any
+  store can move to a different backend later, RocksDB included, without
+  the higher levels noticing. This isn't the facade that failed review
+  (#19949, #20566). That one proxied transactions across stores. This
+  object owns construction and lifetime only, and has no transaction API.
+  It's hygiene with no behavior change, so it can land any time,
+  independent of S10. It also leaves S12 with only the transaction scope
+  to remove.
+
 ## Stage 2 — read views (in progress)
 
 Purely additive: new read APIs, no writer changes. Worth being precise
@@ -141,9 +163,10 @@ layout.
     ignores `chain_index` would otherwise leave it stale while later code
     trusts it. That makes the release one-way, so it carries the same
     "back up first" note as `chia db upgrade`.
-- **S12.** `DBWrapper2` becomes store-internal. After S10, `add_block`
-  still opens the outer transaction so the blob write and the transition
-  commit together. That goes away when S15 separates the archive write
+- **S12.** `DBWrapper2` becomes store-internal. S5a already hides its
+  construction. What's left is the transaction scope: after S10,
+  `add_block` still opens the outer transaction so the blob write and the
+  transition commit together. That goes away when S15 separates the archive write
   (with its retry path), so S12 lands with S15. It's a consequence, not its
   own project.
 - **S13.** `BlockHeightMap` becomes a bounded cache (~10k heights). This is

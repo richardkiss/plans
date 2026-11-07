@@ -21,6 +21,10 @@ Living page. Dated entries, newest first.
   [decision log](decisions.md) has the summary.
 - New page: the [S10 transition contract](s10-contract.md), written so S10
   can be implemented and reviewed against it.
+- New step S5a (2026-11-06): one owner for the database file hides
+  `DBWrapper2` from `FullNode`, and `BlockHeightMap` stops running SQL. The
+  goal is that any store, the archive included, could move to RocksDB later
+  without the higher levels noticing ([pathway](pathway.md)).
 - Archive durability (A) is decided: repair at startup by walking the
   peak back until the archive has every block, with no extra fsync
   ([target](target.md#the-archive-and-recovery)).
