@@ -121,14 +121,13 @@ This applies only if S11 ships. The data already exists: every
   refuse to open, so a binary that ignores `chain_index` can't leave it
   stale ([Pathway](pathway.md), S11).
 
-A prototype of the `low` bookkeeping exists (commit `538677bcd6` on
-`store-split-s9-5-chain-index-fill`, not pushed). It walks `prev_hash` one
-awaited query per block. The bookkeeping is sound: a rollback below
+An earlier prototype of this fill walked `prev_hash` with one awaited query
+per block. Its `low` bookkeeping is sound: a rollback below
 `low - 1` changes `low` and the batch is discarded; a fork exactly at
 `low - 1` leaves the ancestry being filled intact. But the walk is the slow
 choice. It also trusts `MIN(height)` as proof of contiguity at bootstrap,
-and doesn't check stored heights or the genesis block. Rebuild it on the
-batch copy above if S11 goes ahead.
+and doesn't check stored heights or the genesis block. If S11 goes ahead,
+use the batch copy above instead.
 
 ## Considered and set aside
 

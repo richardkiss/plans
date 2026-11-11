@@ -11,9 +11,8 @@ Living page. Dated entries, newest first.
   when the pin went stale mid-fetch, following review comments.
 - **S9 (#21455)** is open as a draft, rebased on main. It's parked until a
   reader needs the chain index (see the [decision log](decisions.md)).
-- A prototype in-node fill for the chain index exists locally and isn't
-  pushed. [Migrations](migration.md) describes the simpler batch copy that
-  should replace it if S11 goes ahead.
+- An in-node fill for the chain index was prototyped. [Migrations](migration.md)
+  describes the simpler batch copy to use instead if S11 goes ahead.
 - [Target](target.md), [invariants](invariants.md),
   [pathway](pathway.md), [migrations](migration.md) and
   [benchmarks](benchmarks.md) were revised after an independent review.
