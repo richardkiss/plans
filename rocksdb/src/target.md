@@ -148,7 +148,7 @@ Every height-history caller is routed before S17.
 ## The archive and recovery
 
 Full block blobs stay in SQLite for now, addressed by header hash. Nothing
-above the stores depends on that (see S5a on the [pathway](pathway.md)), so
+above the stores depends on that (see S5a/S5b on the [pathway](pathway.md)), so
 the archive could move to RocksDB later too. Consensus and
 archive are now two databases, and application write order across two
 independently buffered databases is not durable order. Power loss can

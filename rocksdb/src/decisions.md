@@ -199,3 +199,20 @@ stores, and `BlockHeightMap` reads through a `BlockStore` method instead of
 SQL. It owns construction and lifetime, not transactions, so it isn't the
 cross-store transaction facade rejected in #19949/#20566. Transactions stay
 inside store methods (S10, S12) ([Pathway](pathway.md)).
+
+> **Superseded 2026-11-11** (entry below): no owner object. The stores
+> get `DBWrapper2` directly and are injected into `FullNode`.
+
+## 2026-11-11 — Interfaces and injection, not an owner object
+
+The 11-06 owner object was a wrapper around `DBWrapper2`, and that's not
+the point. The point is three interfaces (coin, block, explorer) whose
+SQLite implementations take `DBWrapper2` directly and share it during the
+transition, so that the coin implementation can be replaced by RocksDB
+while the others stay SQLite. `DBWrapper2` is a loose dependency of
+`chia.full_node`: the stores are built where the node is assembled and
+injected into `FullNode`, which only sees the interfaces (S5a, S5b).
+
+`BlockHeightMap` stays as it is for now: synchronous, in RAM, fast. At S11
+it folds into the coin store, which by then owns the peak and the chain
+index, and the store updates it as part of committing a transition.

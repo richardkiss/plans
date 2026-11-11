@@ -50,27 +50,39 @@ merged 2026-07-27/28.
 
 *Rollback:* pure types and method moves — each reverts independently.
 
-- **S5a — not started (added 2026-11-06).** Hide `DBWrapper2` behind one
-  owner. Today `FullNode` creates the `DBWrapper2`, runs the v1/v2 version
-  bootstrap SQL itself, and hands the wrapper to `BlockStore`, `HintStore`,
-  `CoinStore` and `BlockHeightMap` (`full_node.py:285-342`), and
-  `BlockHeightMap` in `chia.consensus` runs raw SQL on `full_blocks`
-  through it (`block_height_map.py:12, 26, 58, 196-202`). After S5a:
-  - One object in `chia.full_node` owns the database file: it opens it,
-    checks and bootstraps the version, holds the `DBWrapper2`, constructs
-    the stores, and closes it all. `FullNode` gets stores from it and never
-    sees the wrapper. `FullNode.db_wrapper` goes away.
-  - `BlockHeightMap` gets its rows from a `BlockStore` method instead of
-    SQL, so `chia.consensus` stops importing `chia.util.db_wrapper`.
+*(Revised 2026-11-11. S5a used to be "one owner object that hides
+`DBWrapper2`". That was a wrapper around a wrapper and is dropped. What
+replaces it is a boundary: interfaces for the coin, block and explorer
+stores, SQLite implementations that get `DBWrapper2` at the place the node
+is assembled, and a `FullNode` that only sees the interfaces.)*
 
-  Why: everything above the stores sees store interfaces only, so any
-  store can move to a different backend later, RocksDB included, without
-  the higher levels noticing. This isn't the facade that failed review
-  (#19949, #20566). That one proxied transactions across stores. This
-  object owns construction and lifetime only, and has no transaction API.
-  It's hygiene with no behavior change, so it can land any time,
-  independent of S10. It also leaves S12 with only the transaction scope
-  to remove.
+- **S5a — not started. Explorer interface.** Today the explorer role has
+  no interface, and it's split across two classes. `HintStore` holds the
+  `hints` table. `CoinStore` holds the wallet/RPC queries: by puzzle hash,
+  by parent, coin states, batch coin states, and the mempool's singleton
+  lineage lookup. One of those queries reads both `coin_record` and
+  `hints`. Wallet-protocol and RPC code call them all on the concrete
+  classes. S5a adds `ExplorerStoreProtocol` and an SQLite `ExplorerStore`
+  that takes over `HintStore` and those query methods, unchanged, over the
+  same `DBWrapper2` and tables. Payoff: a RocksDB coin store only has to
+  implement the coin interface, and every query it can't answer has a
+  named home. The SQLite explorer reads `coin_record`, so it only works
+  next to the SQLite coin store. A RocksDB node has no explorer until S16
+  (it's a restricted validator, see the
+  [decision log](decisions.md)).
+- **S5b — not started. Inject the stores into `FullNode`.** Today
+  `FullNode.manage()` opens the database, bootstraps the version, and
+  builds every store itself. After S5b the node is assembled outside it.
+  The service entry point passes `FullNode` an *opener*: an async context
+  that opens the database and yields the coin, block and explorer
+  interfaces. `FullNode` enters it first and leaves it last, the same
+  lifetime as today. Only that opener and the store implementations import
+  `DBWrapper2`, and `FullNode` imports no concrete store. `BlockHeightMap`
+  is built there too, unchanged, until S11. The opener has to give the
+  block and coin stores the *same* `DBWrapper2`, because their one shared
+  transaction (`add_block`) depends on it until S10/S11. So S5b makes the
+  backends swappable in the types. It doesn't yet make a RocksDB coin
+  store safe to plug in. Needs S5a.
 
 ## Stage 2 — read views (in progress)
 
@@ -117,14 +129,18 @@ layout.
 
 - **S9 — [#21455](https://github.com/Chia-Network/chia-blockchain/pull/21455)
   (draft, parked).** A `chain_index(height → header_hash)` table,
-  dual-written with `in_main_chain` in the same transaction. Correct by
+  dual-written with `in_main_chain` in the same transaction. Under the
+  coin/block/explorer boundary the chain index is coin-store state, so if
+  this is revived, its writes belong in S10's coin-store transition, not in
+  `BlockStore`. Correct by
   construction, but it has no readers, and on an upgraded node it only
   covers heights from the upgrade on. It ships only together with S11's
   fill, a consumer, and S11's schema gate. Otherwise it's a fourth copy of
   the same data.
 - **S10. The transition API over the existing tables.**
-  `apply_transition(expected_peak, fork_height, blocks)` on the consensus
-  store: rewind plus every replacement block's coin changes, flags and
+  `apply_transition(expected_peak, fork_height, blocks)` on the coin store
+  (its SQLite implementation writes today's flags and peak through the
+  shared `DBWrapper2`): rewind plus every replacement block's coin changes, flags and
   peak, inside one transaction, with read-your-writes. Blocks without
   transactions are included. No schema change: it maps onto today's
   `coin_record`, flags and `current_peak`, and the block-blob write stays
@@ -158,13 +174,20 @@ layout.
     counts, and `chia db validate` (`block_store.py:316-598`,
     `db_validate_func.py:149-170`).
   - *Retire* the `height-to-hash` file, and stop writing `in_main_chain`.
+  - *Ownership.* The peak and the chain index become coin-store state, and
+    `BlockStoreProtocol` loses `rollback`, `set_in_chain`, `set_peak` and
+    `transaction()`, so what's left is the archive interface.
+    `BlockHeightMap` folds into the coin store: it keeps its in-RAM copy
+    and serves the same synchronous reads, and it's updated as part of
+    committing a transition, so `Blockchain` and the simulator stop
+    updating it by hand.
   - *Downgrade policy.* S9 and S11 ship in the same release, behind one
     schema version bump that older binaries refuse to open. A binary that
     ignores `chain_index` would otherwise leave it stale while later code
     trusts it. That makes the release one-way, so it carries the same
     "back up first" note as `chia db upgrade`.
-- **S12.** `DBWrapper2` becomes store-internal. S5a already hides its
-  construction. What's left is the transaction scope: after S10,
+- **S12.** `DBWrapper2` becomes store-internal. S5b already moves its
+  construction out of `FullNode`. What's left is the transaction scope: after S10,
   `add_block` still opens the outer transaction so the blob write and the
   transition commit together. That goes away when S15 separates the archive write
   (with its retry path), so S12 lands with S15. It's a consequence, not its
@@ -176,7 +199,12 @@ layout.
   validation, and a bound relative to the block being validated isn't a
   bound relative to the peak during a deep fork). Decide
   `BlockchainMMRManager`'s persistence (nodes and frontier on disk) in the
-  same PR.
+  same PR. One idea could make this simpler: the ~4,700-block lookback
+  that sizes the window comes from difficulty adjustment, which only needs
+  a handful of fields from one block per epoch. A small per-epoch cache of
+  those (keyed by that block's hash, computed the slow way on a miss)
+  would remove the lookback. Check whether that has happened before
+  designing S13.
 
 *Acceptance (per rung):* crash and cancellation tests at reorg boundaries;
 peak, chain index and coin set never disagree.
