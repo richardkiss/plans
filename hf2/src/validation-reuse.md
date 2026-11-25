@@ -44,4 +44,8 @@ Use the commitment cache for puzzle hashing within the same allocator. The curre
 
 ## Status
 
-Design proposal, no runtime changes or measured speedup. Keep #1572 and the downstream #21654 compatibility work independent. The published three-argument hash binding checks the cap internally; the local one-argument variant at e84343d37 checks it in Python. Use the invariant in either integration. The held rename at c9cd2f37 is independent. #1543 (396b2e6b, default compression level 0) supplies standalone recompression; it need not wait for shared validation ownership.
+As of 2026-11-24, generator reuse remains a design proposal. Performance measurements are pending.
+
+The draft chia-blockchain PR uses a released chia_rs dependency and applies a temporary Python size bound before hashing at commit `578fb4b5a`. The chia_rs size-bound PR is backlogged. The proposed reuse path must preserve the early bound. [chia-blockchain #21654](https://github.com/Chia-Network/chia-blockchain/pull/21654) · [chia_rs #1572](https://github.com/Chia-Network/chia_rs/pull/1572)
+
+Standalone recompression merged at `8b328e63` with compression level 0 as the default. Sharing the validation allocator with the encoder remains optional in step 4. [chia_rs #1543](https://github.com/Chia-Network/chia_rs/pull/1543)
